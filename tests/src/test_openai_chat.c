@@ -54,8 +54,9 @@ int main() {
         "gpt-4o-mini",      // Model ID
         0.7,                // Temperature
         4096,               // Max tokens
-        messages,
+        (char **)messages,
         2,
+        0,
         chat_output_interface
     );
 
