@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Maintainer: Andy Curtis <contactandyc@gmail.com>
 cmake_minimum_required(VERSION 3.10)
+project(a_curl_library_tests C)
 
 # Enable testing
 enable_testing()

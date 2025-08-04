@@ -1,0 +1,840 @@
+// SPDX-FileCopyrightText: 2024-2025 Knode.ai
+// SPDX-License-Identifier: Apache-2.0
+// Maintainer: Andy Curtis <contactandyc@gmail.com>
+
+#include "a-curl-library/impl/curl_event_priv.h"
+#include "a-curl-library/curl_event_request.h"
+#include "a-curl-library/curl_output.h"
+#include "a-curl-library/rate_manager.h"
+
+#include "a-memory-library/aml_alloc.h"
+#include "a-memory-library/aml_pool.h"
+#include "the-macro-library/macro_time.h"
+
+#include <curl/curl.h>
+#include <pthread.h>
+#include <stdarg.h>
+#include <stddef.h>
+#include <string.h>
+#include <ctype.h>
+
+/* ────────────────────────────────────────────────────────────────────
+   Small helpers
+   ──────────────────────────────────────────────────────────────────── */
+
+static inline curl_event_loop_request_t *
+wrap_from_public(curl_event_request_t *r) {
+    return (curl_event_loop_request_t *)((char *)r - offsetof(curl_event_loop_request_t, request));
+}
+
+/* Lightweight xorshift64* RNG for jitter (per-process) */
+static uint64_t rng_state = 88172645463393265ull;
+static inline uint64_t xrng64(void) {
+    uint64_t x = rng_state;
+    x ^= x >> 12; x ^= x << 25; x ^= x >> 27;
+    rng_state = x;
+    return x * 2685821657736338717ull;
+}
+
+/* ajson serializer hook */
+static curl_event_ajson_serialize_fn g_ajson_serialize = NULL;
+void curl_event_set_ajson_serializer(curl_event_ajson_serialize_fn fn) {
+    g_ajson_serialize = fn;
+}
+
+/* Robust trim helpers */
+static inline const char *ltrim(const char *s) { while (*s && isspace((unsigned char)*s)) ++s; return s; }
+static inline void rtrim_inplace(char *s) {
+    size_t n = strlen(s);
+    while (n && isspace((unsigned char)s[n-1])) s[--n] = '\0';
+}
+
+/* Compute jittered backoff (ms) with optional floor/cap and full jitter */
+static uint64_t compute_backoff_ms(int attempt,
+                                   double factor,
+                                   uint64_t min_ms,
+                                   uint64_t max_ms,
+                                   bool full_jitter)
+{
+    if (attempt < 1) attempt = 1;
+    double base = 1.0;
+    for (int i = 0; i < attempt; ++i) base *= (factor > 0 ? factor : 2.0);
+    double raw_ms = base * 100.0; /* base unit: 100ms steps */
+    uint64_t cap_ms = (uint64_t)(raw_ms);
+
+    uint64_t jitter = (uint64_t)(xrng64() % (full_jitter ? (cap_ms + 1) : (cap_ms / 2 + 1)));
+    uint64_t delay = full_jitter ? jitter : (cap_ms/2 + jitter);
+
+    if (min_ms && delay < min_ms) delay = min_ms;
+    if (max_ms && delay > max_ms) delay = max_ms;
+    return delay;
+}
+
+/* Enhanced default retry policy */
+static bool default_calculate_retry_enhanced(curl_event_request_t *req) {
+    if (req->max_retries == -1 || req->current_retries < req->max_retries) {
+        req->current_retries++;
+        uint64_t delay_ms = compute_backoff_ms(req->current_retries,
+                                               req->backoff_factor,
+                                               req->min_backoff_delay_ms,
+                                               req->max_backoff_delay_ms,
+                                               req->full_jitter);
+        uint64_t now = macro_now();
+        req->next_retry_at = now + (delay_ms * 1000000ull);
+        return true;
+    }
+    return false;
+}
+
+/* ────────────────────────────────────────────────────────────────────
+   Public builder / lifecycle
+   ──────────────────────────────────────────────────────────────────── */
+
+curl_event_request_t *curl_event_request_new(size_t pool_size) {
+    size_t sz = (pool_size == 0) ? 4096 : pool_size;
+
+    /* Request-owned pool */
+    aml_pool_t *pool = aml_pool_init(sz);
+    if (!pool) return NULL;
+
+    /* Wrapper allocated FROM the pool */
+    curl_event_loop_request_t *wrap =
+        (curl_event_loop_request_t *)aml_pool_calloc(pool, 1, sizeof(*wrap));
+    if (!wrap) {
+        aml_pool_destroy(pool);
+        return NULL;
+    }
+
+    /* Initialize defaults */
+    curl_event_request_t *req = &wrap->request;
+    req->loop                  = NULL;
+    req->pool                  = pool;
+
+    req->url                   = NULL;
+    req->method                = NULL;   /* inferred later if still NULL */
+    req->post_data             = NULL;
+    req->headers               = NULL;
+
+    req->dep_head              = NULL;
+    req->rate_limit            = NULL;
+    req->rate_limit_high_priority = false;
+
+    req->connect_timeout       = 0;
+    req->transfer_timeout      = 0;
+    req->low_speed_limit       = 0;
+    req->low_speed_time        = 0;
+
+    req->max_retries           = 0;
+    req->backoff_factor        = 2.0;
+    req->min_backoff_delay_ms  = 0;
+    req->max_backoff_delay_ms  = 0;
+    req->full_jitter           = true;
+
+    req->on_complete           = NULL;
+    req->on_failure            = NULL;
+    req->write_cb              = NULL;
+    req->on_retry              = NULL;
+    req->on_prepare            = NULL;
+
+    req->output_data              = NULL;
+    req->output_data_cleanup      = NULL;
+
+    req->plugin_data              = NULL;
+    req->plugin_data_cleanup      = NULL;
+
+    req->should_refresh        = false;
+    req->output_initialized    = false;
+    req->max_download_size     = 0;
+
+    req->current_retries       = 0;
+    req->next_retry_at         = 0;
+    req->start_time            = 0;
+    req->request_start_time    = 0;
+
+    req->priority              = 0;   /* default */
+    req->http3_override        = -1;  /* use loop default */
+    req->refresh_interval_ms   = 0;
+    req->refresh_backoff_on_errors = true;
+
+    /* Private wrapper flags */
+    wrap->content_length_found = false;
+    wrap->content_length       = -1;
+    wrap->is_injected          = false;
+    wrap->is_cancelled         = false;
+    wrap->is_pending           = false;
+    wrap->deps_retained        = false;
+    wrap->multi_handle         = NULL;
+    wrap->easy_handle          = NULL;
+    wrap->next_cancelled       = NULL;
+    wrap->next_pending         = NULL;
+    wrap->bytes_downloaded     = 0;
+
+    req->json_root              = NULL;
+    req->json_set_ct            = true;
+
+    return req;
+}
+
+void curl_event_request_free_unsubmitted(curl_event_request_t *req_pub) {
+    if (!req_pub) return;
+    curl_event_loop_request_t *wrap = wrap_from_public(req_pub);
+
+    if (req_pub->headers) {
+        curl_slist_free_all(req_pub->headers);
+        req_pub->headers = NULL;
+    }
+    if (req_pub->pool) {
+        aml_pool_destroy(req_pub->pool);
+        req_pub->pool = NULL;
+    }
+}
+
+/* ────────────────────────────────────────────────────────────────────
+   Convenience builders (no submit)
+   ──────────────────────────────────────────────────────────────────── */
+
+curl_event_request_t *
+curl_event_request_build_get(const char *url,
+                             curl_event_write_callback_t write_cb,
+                             curl_event_on_complete_t on_complete,
+                             void *output_data)
+{
+    curl_event_request_t *r = curl_event_request_new(0);
+    if (!r) return NULL;
+    curl_event_request_url(r, url);
+    curl_event_request_method(r, "GET");
+    curl_event_request_on_write(r, write_cb);
+    curl_event_request_on_complete(r, on_complete);
+    curl_event_request_output_data(r, output_data, NULL);
+    return r;
+}
+
+curl_event_request_t *
+curl_event_request_build_post(const char *url,
+                              const char *body,
+                              const char *content_type,
+                              curl_event_write_callback_t write_cb,
+                              curl_event_on_complete_t on_complete,
+                              void *output_data)
+{
+    curl_event_request_t *r = curl_event_request_new(0);
+    if (!r) return NULL;
+    curl_event_request_url(r, url);
+    curl_event_request_method(r, "POST");
+    if (body) curl_event_request_body(r, body);
+    if (content_type) curl_event_request_set_header(r, "Content-Type", content_type);
+    curl_event_request_on_write(r, write_cb);
+    curl_event_request_on_complete(r, on_complete);
+    curl_event_request_output_data(r, output_data, NULL);
+    return r;
+}
+
+curl_event_request_t *
+curl_event_request_build_post_json(const char *url,
+                                   const ajson_t *json,
+                                   curl_event_write_callback_t write_cb,
+                                   curl_event_on_complete_t on_complete,
+                                   void *output_data)
+{
+    curl_event_request_t *r = curl_event_request_new(0);
+    if (!r) return NULL;
+    curl_event_request_url(r, url);
+    curl_event_request_method(r, "POST");
+    curl_event_request_set_header(r, "Content-Type", "application/json");
+    if (g_ajson_serialize) {
+        char *json_str = g_ajson_serialize(r->pool, json);
+        curl_event_request_body(r, json_str ? json_str : "{}");
+    } else {
+        /* Fallback to empty object if serializer not provided */
+        curl_event_request_body(r, "{}");
+    }
+    curl_event_request_on_write(r, write_cb);
+    curl_event_request_on_complete(r, on_complete);
+    curl_event_request_output_data(r, output_data, NULL);
+    return r;
+}
+
+/* ────────────────────────────────────────────────────────────────────
+   Submission
+   ──────────────────────────────────────────────────────────────────── */
+
+curl_event_request_t *
+curl_event_request_submitp(curl_event_loop_t *loop, curl_event_request_t *req)
+{
+    return curl_event_request_submit(loop, req, req->priority);
+}
+
+/* Forward decls for internal helpers used by loop */
+static bool setup_curl_handle(curl_event_loop_request_t *req, curl_event_loop_t *loop);
+static size_t write_thunk(void *ptr, size_t size, size_t nmemb, void *output_data);
+static size_t header_callback(char *buffer, size_t size, size_t nitems, void *output_data);
+
+curl_event_request_t *
+curl_event_request_submit(curl_event_loop_t *loop,
+                          curl_event_request_t *req_pub,
+                          int priority)
+{
+    if (!loop || !req_pub || !req_pub->url) {
+        fprintf(stderr, "[curl_event_request_submit] Invalid arguments.\n");
+        return NULL;
+    }
+
+    curl_event_loop_request_t *wrap = wrap_from_public(req_pub);
+    if (wrap->is_pending || wrap->multi_handle) {
+        fprintf(stderr, "[curl_event_request_submit] Request already submitted.\n");
+        return NULL;
+    }
+
+    /* finalize some inferred defaults here */
+    if (!req_pub->method) {
+        req_pub->method = aml_pool_strdup(req_pub->pool,
+                           (req_pub->post_data ? "POST" : "GET"));
+    }
+    if (!req_pub->on_retry && (req_pub->max_retries != 0)) {
+        req_pub->on_retry = default_calculate_retry_enhanced;
+    }
+
+    req_pub->loop                = loop;
+    req_pub->next_retry_at       = macro_now();
+    req_pub->start_time          = req_pub->next_retry_at;
+    req_pub->request_start_time  = req_pub->next_retry_at;
+
+    int pri = (priority != 0) ? priority : req_pub->priority;
+    if (pri != 0) {
+        /* higher priority → sooner: subtract seconds in nanoseconds, clamp */
+        uint64_t adj = (uint64_t)((int64_t)pri > 0 ? (int64_t)pri : 0) * 1000000000ull;
+        if (adj < req_pub->next_retry_at) req_pub->next_retry_at -= adj;
+    }
+
+    pthread_mutex_lock(&loop->mutex);
+    wrap->is_pending    = true;
+    wrap->next_pending  = loop->pending_requests;
+    loop->pending_requests = wrap;
+    loop->metrics.total_requests++;
+    pthread_mutex_unlock(&loop->mutex);
+
+    return req_pub;
+}
+
+/* ────────────────────────────────────────────────────────────────────
+   Loop-internal helpers required by the scheduler / transport
+   (called from the loop; signatures unchanged)
+   ──────────────────────────────────────────────────────────────────── */
+
+void curl_event_loop_request_cleanup(curl_event_loop_request_t *req) {
+    if (req->easy_handle) {
+        if (req->multi_handle) {
+            curl_multi_remove_handle(req->multi_handle, req->easy_handle);
+            req->request.loop->num_multi_requests--;
+        }
+        curl_easy_cleanup(req->easy_handle);
+        req->easy_handle  = NULL;
+        req->multi_handle = NULL;
+    }
+    req->content_length_found = false;
+    req->content_length       = -1;
+    req->bytes_downloaded     = 0;
+}
+
+void curl_event_request_destroy(curl_event_loop_request_t *req) {
+    if (!req) return;
+
+    /* tear down libcurl handles */
+    curl_event_loop_request_cleanup(req);
+
+    if (req->deps_retained) {
+        curl_resource_release_request_deps(req->request.loop, &req->request);
+        req->deps_retained = false;
+    }
+
+    if (req->request.headers) {
+        curl_slist_free_all(req->request.headers);
+        req->request.headers = NULL;
+    }
+
+    if (req->request.output_data && req->request.output_data_cleanup) {
+        req->request.output_data_cleanup(req->request.output_data);
+        req->request.output_data = NULL;
+    }
+
+    if (req->request.plugin_data && req->request.plugin_data_cleanup) {
+        req->request.plugin_data_cleanup(req->request.plugin_data);
+        req->request.plugin_data = NULL;
+    }
+
+    if (req->request.pool) {
+        aml_pool_destroy(req->request.pool);
+        req->request.pool = NULL;
+    }
+}
+
+/* Enforce max_download_size in body phase; call user write_cb if allowed */
+static size_t write_thunk(void *ptr, size_t size, size_t nmemb, void *output_data) {
+    curl_event_request_t *pub = (curl_event_request_t *)output_data;
+    curl_event_loop_request_t *req = wrap_from_public(pub);
+    size_t total = size * nmemb;
+
+    if (pub->max_download_size > 0) {
+        if ((long)(req->bytes_downloaded + (long)total) > pub->max_download_size) {
+            /* Clamp to boundary to allow partial if desired, then abort */
+            size_t allowed = (size_t)((pub->max_download_size - req->bytes_downloaded) > 0
+                                      ? (pub->max_download_size - req->bytes_downloaded) : 0);
+            if (allowed && pub->write_cb) {
+                size_t w = pub->write_cb(ptr, 1, allowed, pub);
+                req->bytes_downloaded += (long)w;
+            }
+            return 0; /* abort transfer */
+        }
+    }
+
+    req->bytes_downloaded += (long)total;
+    if (!pub->write_cb) return total; /* discard if no cb */
+    return pub->write_cb(ptr, size, nmemb, pub);
+}
+
+/* Robust header parser for Content-Length with limits */
+static size_t header_callback(char *buffer, size_t size, size_t nitems, void *output_data) {
+    size_t total_size = size * nitems;
+    curl_event_loop_request_t *req = (curl_event_loop_request_t *)output_data;
+    char *line = (char *)aml_calloc(1, total_size + 1);
+    if (!line) return total_size;
+    memcpy(line, buffer, total_size);
+    line[total_size] = '\0';
+    rtrim_inplace(line);
+
+    /* Case-insensitive check for "Content-Length:" */
+    const char *p = line;
+    if (strncasecmp(p, "Content-Length", 14) == 0) {
+        p = line + 14;
+        if (*p == ':') ++p;
+        p = ltrim(p);
+        long cl = 0;
+        for (; *p; ++p) {
+            if (!isdigit((unsigned char)*p)) break;
+            cl = cl * 10 + (*p - '0');
+            if (cl < 0) { cl = -1; break; }
+        }
+        req->content_length_found = true;
+        req->content_length = cl;
+
+        if (cl > req->request.max_download_size && req->request.max_download_size > 0) {
+            fprintf(stderr, "[curl_event_loop] Content-Length exceeds max_download_size (%ld > %ld)\n",
+                    cl, req->request.max_download_size);
+            aml_free(line);
+            return 0; /* abort transfer */
+        }
+    }
+
+    aml_free(line);
+    return total_size;
+}
+
+/* Sets up the easy handle based on the public request fields. */
+static bool setup_curl_handle(curl_event_loop_request_t *req, curl_event_loop_t *loop) {
+    req->easy_handle          = NULL;
+    req->content_length_found = false;
+    req->content_length       = -1;
+    req->bytes_downloaded     = 0;
+
+    if (req->request.on_prepare) {
+        if (!req->request.on_prepare(&req->request))
+            return false;
+    }
+
+    req->easy_handle = curl_easy_init();
+    if (!req->easy_handle) {
+        fprintf(stderr, "[setup_curl_handle] curl_easy_init failed.\n");
+        return false;
+    }
+
+    curl_easy_setopt(req->easy_handle, CURLOPT_URL, req->request.url);
+    curl_easy_setopt(req->easy_handle, CURLOPT_ACCEPT_ENCODING, "");
+
+    if (req->request.max_download_size > 0) {
+        curl_easy_setopt(req->easy_handle, CURLOPT_HEADERFUNCTION, header_callback);
+        curl_easy_setopt(req->easy_handle, CURLOPT_HEADERDATA, req);
+    }
+
+    /* If a JSON root exists and body not set, stringify now */
+    if (req->request.json_root && !req->request.post_data) {
+        curl_event_request_json_commit(&req->request);
+    }
+
+    const char *method = req->request.method ? req->request.method
+                        : (req->request.post_data ? "POST" : "GET");
+    if (strcasecmp(method, "POST") == 0) {
+        curl_easy_setopt(req->easy_handle, CURLOPT_POST, 1L);
+        if (req->request.post_data) {
+            curl_easy_setopt(req->easy_handle, CURLOPT_POSTFIELDS, req->request.post_data);
+        }
+    } else if (strcasecmp(method, "PUT") == 0) {
+        curl_easy_setopt(req->easy_handle, CURLOPT_UPLOAD, 1L);
+        if (req->request.post_data) {
+            /* For simple PUT with known buffer; libcurl will read from memory */
+            curl_easy_setopt(req->easy_handle, CURLOPT_POSTFIELDS, req->request.post_data);
+        }
+    } else if (strcasecmp(method, "DELETE") == 0) {
+        curl_easy_setopt(req->easy_handle, CURLOPT_CUSTOMREQUEST, "DELETE");
+    } else if (strcasecmp(method, "PATCH") == 0) {
+        curl_easy_setopt(req->easy_handle, CURLOPT_CUSTOMREQUEST, "PATCH");
+        if (req->request.post_data) {
+            curl_easy_setopt(req->easy_handle, CURLOPT_POSTFIELDS, req->request.post_data);
+        }
+    } else {
+        /* default GET */
+    }
+
+    if (req->request.headers) {
+        curl_easy_setopt(req->easy_handle, CURLOPT_HTTPHEADER, req->request.headers);
+    }
+
+    /* Timeouts / speed limits */
+    if (req->request.connect_timeout > 0) {
+        curl_easy_setopt(req->easy_handle, CURLOPT_CONNECTTIMEOUT, req->request.connect_timeout);
+    }
+    if (req->request.transfer_timeout > 0) {
+        curl_easy_setopt(req->easy_handle, CURLOPT_TIMEOUT, req->request.transfer_timeout);
+    }
+    if (req->request.low_speed_limit > 0) {
+        curl_easy_setopt(req->easy_handle, CURLOPT_LOW_SPEED_LIMIT, req->request.low_speed_limit);
+    }
+    if (req->request.low_speed_time > 0) {
+        curl_easy_setopt(req->easy_handle, CURLOPT_LOW_SPEED_TIME, req->request.low_speed_time);
+    }
+
+    /* HTTP/3 selection: loop default unless overridden per request */
+    bool use_http3 = loop->enable_http3;
+    if (req->request.http3_override == 0) use_http3 = false;
+    if (req->request.http3_override == 1) use_http3 = true;
+    if (use_http3) {
+        curl_easy_setopt(req->easy_handle, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_3);
+    }
+
+    /* Write thunk that enforces max_download_size then calls user cb */
+    curl_easy_setopt(req->easy_handle, CURLOPT_WRITEFUNCTION, write_thunk);
+    curl_easy_setopt(req->easy_handle, CURLOPT_WRITEDATA, &req->request);
+
+    /* Back-pointer */
+    curl_easy_setopt(req->easy_handle, CURLOPT_PRIVATE, req);
+
+    /* Shared handle (DNS cache) */
+    curl_easy_setopt(req->easy_handle, CURLOPT_SHARE, loop->shared_handle);
+    return true;
+}
+
+bool curl_event_loop_request_start(curl_event_loop_request_t *req) {
+    curl_event_loop_t *loop = req->request.loop;
+
+    if (req->request.rate_limit) {
+        uint64_t next = rate_manager_start_request(
+            req->request.rate_limit, req->request.rate_limit_high_priority);
+        if (next) {
+            req->request.next_retry_at = next;
+            curl_event_request_insert(&loop->rate_limited_requests, req);
+            return false;
+        }
+    }
+
+    if (!setup_curl_handle(req, loop)) {
+        /* irrecoverable at this point; destroy request */
+        curl_event_request_destroy(req);
+        return false;
+    }
+
+    curl_multi_add_handle(loop->multi_handle, req->easy_handle);
+    req->request.request_start_time = macro_now();
+    loop->num_multi_requests++;
+    req->multi_handle = loop->multi_handle;
+    curl_event_request_insert(&loop->queued_requests, req);
+    loop->num_queued_requests++;
+    return true;
+}
+
+void curl_event_request_apply_browser_profile(curl_event_request_t *r,
+                                              const char *ua_opt,
+                                              const char *al_opt)
+{
+    const char *ua = ua_opt ? ua_opt :
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36";
+
+    const char *al = al_opt ? al_opt : "en-US,en;q=0.9";
+
+    // Safe to set unconditionally — caller can still override later with set_header()
+    curl_event_request_set_header(r, "User-Agent", ua);
+    curl_event_request_set_header(r, "Accept",
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+    curl_event_request_set_header(r, "Accept-Language", al);
+    // Do NOT set Sec-Fetch-* or Connection: keep-alive; those are browser/TCP-state specific.
+    // Accept-Encoding is already covered by CURLOPT_ACCEPT_ENCODING "".
+}
+
+void curl_event_request_depend(curl_event_request_t *req, curl_event_res_id id) {
+    if (!req || id == 0) return;
+    curl_res_dep_t *node = (curl_res_dep_t *)aml_pool_calloc(req->pool, 1, sizeof(*node));
+    node->id = id;
+    node->next = (curl_res_dep_t *)req->dep_head;
+    req->dep_head = (struct curl_res_dep_s *)node;
+}
+
+
+void curl_event_request_depend_many(curl_event_request_t *req,
+                                    const curl_event_res_id *ids, int n) {
+    if (!req || !ids || n <= 0) return;
+    for (int i = 0; i < n; ++i) curl_event_request_depend(req, ids[i]);
+}
+
+/* ────────────────────────────────────────────────────────────────────
+   Public helpers (unchanged signatures)
+   ──────────────────────────────────────────────────────────────────── */
+
+double curl_event_request_time_spent(const curl_event_request_t *r) {
+    return macro_time_diff(macro_now(), r->start_time);
+}
+
+double curl_event_request_time_spent_on_request(const curl_event_request_t *r) {
+    return macro_time_diff(macro_now(), r->request_start_time);
+}
+
+long curl_event_request_content_length(curl_event_request_t *r) {
+    curl_event_loop_request_t *req = wrap_from_public(r);
+    if (!req->content_length_found) {
+        curl_off_t content_length = 0;
+        if (req->easy_handle) {
+            curl_easy_getinfo(req->easy_handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &content_length);
+            if (content_length >= 0) {
+                req->content_length = (long)content_length;
+            }
+        }
+        req->content_length_found = true;
+    }
+    return req->content_length;
+}
+
+/* ────────────────────────────────────────────────────────────────────
+   Mutators (mostly thin setters using the request pool)
+   ──────────────────────────────────────────────────────────────────── */
+
+void curl_event_request_url(curl_event_request_t *req, const char *url) {
+    req->url = aml_pool_strdup(req->pool, url);
+}
+void curl_event_request_urlf(curl_event_request_t *req, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    req->url = aml_pool_strdupvf(req->pool, fmt, ap);
+    va_end(ap);
+}
+void curl_event_request_method(curl_event_request_t *req, const char *method) {
+    req->method = aml_pool_strdup(req->pool, method);
+}
+void curl_event_request_body(curl_event_request_t *req, const char *body) {
+    req->post_data = aml_pool_strdup(req->pool, body);
+}
+void curl_event_request_bodyf(curl_event_request_t *req, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    req->post_data = aml_pool_strdupvf(req->pool, fmt, ap);
+    va_end(ap);
+}
+void curl_event_request_json_body(curl_event_request_t *req, const char *json) {
+    curl_event_request_set_header(req, "Content-Type", "application/json");
+    req->post_data = aml_pool_strdup(req->pool, json);
+    if (!req->method) req->method = aml_pool_strdup(req->pool, "POST");
+}
+void curl_event_request_json_bodyf(curl_event_request_t *req, const char *fmt, ...) {
+    curl_event_request_set_header(req, "Content-Type", "application/json");
+    va_list ap; va_start(ap, fmt);
+    req->post_data = aml_pool_strdupvf(req->pool, fmt, ap);
+    va_end(ap);
+    if (!req->method) req->method = aml_pool_strdup(req->pool, "POST");
+}
+
+/* Headers */
+static void add_header_line(struct curl_slist **list, const char *name, const char *value) {
+    size_t n = strlen(name) + 2 + strlen(value) + 1;
+    char *line = (char *)aml_calloc(1, n);
+    sprintf(line, "%s: %s", name, value);
+    *list = curl_slist_append(*list, line);
+    aml_free(line);
+}
+void curl_event_request_add_header(curl_event_request_t *req,
+                                   const char *name, const char *value) {
+    add_header_line(&req->headers, name, value);
+}
+void curl_event_request_add_headerf(curl_event_request_t *req,
+                                    const char *name, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    char *val = aml_pool_strdupvf(req->pool, fmt, ap);
+    va_end(ap);
+    add_header_line(&req->headers, name, val);
+}
+
+void curl_event_request_set_header(curl_event_request_t *req,
+                                   const char *name, const char *value)
+{
+    struct curl_slist *new_list = NULL;
+    struct curl_slist *current  = req->headers;
+    size_t name_len = strlen(name);
+    bool found = false;
+    while (current) {
+        if (strncmp(current->data, name, name_len) == 0 &&
+            current->data[name_len] == ':')
+        {
+            add_header_line(&new_list, name, value);
+            found = true;
+        } else {
+            new_list = curl_slist_append(new_list, current->data);
+        }
+        current = current->next;
+    }
+    if (!found) add_header_line(&new_list, name, value);
+    if (req->headers) curl_slist_free_all(req->headers);
+    req->headers = new_list;
+}
+void curl_event_request_set_headerf(curl_event_request_t *req,
+                                    const char *name, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    char *val = aml_pool_strdupvf(req->pool, fmt, ap);
+    va_end(ap);
+    curl_event_request_set_header(req, name, val);
+}
+
+/* Rate limiting */
+void curl_event_request_rate_limit(curl_event_request_t *req,
+                                   const char *key, bool high_priority) {
+    req->rate_limit = aml_pool_strdup(req->pool, key);
+    req->rate_limit_high_priority = high_priority;
+}
+
+/* Timeouts / speed */
+void curl_event_request_connect_timeout(curl_event_request_t *req, long secs) {
+    req->connect_timeout = secs;
+}
+void curl_event_request_transfer_timeout(curl_event_request_t *req, long secs) {
+    req->transfer_timeout = secs;
+}
+void curl_event_request_low_speed(curl_event_request_t *req,
+                                  long bytes_per_sec, long time_secs) {
+    req->low_speed_limit = bytes_per_sec;
+    req->low_speed_time  = time_secs;
+}
+
+/* Retry policy (simple) */
+void curl_event_request_max_retries(curl_event_request_t *req, int max_retries) {
+    req->max_retries = max_retries;
+}
+void curl_event_request_backoff_factor(curl_event_request_t *req, double factor) {
+    req->backoff_factor = factor;
+}
+
+/* Retry policy (enhanced) */
+void curl_event_request_enable_retries(curl_event_request_t *req,
+                                       int max_retries,
+                                       double backoff_factor,
+                                       uint64_t min_delay_ms,
+                                       uint64_t max_delay_ms,
+                                       bool full_jitter)
+{
+    req->max_retries = max_retries;
+    req->backoff_factor = backoff_factor;
+    req->min_backoff_delay_ms = min_delay_ms;
+    req->max_backoff_delay_ms = max_delay_ms;
+    req->full_jitter = full_jitter;
+    if (!req->on_retry) req->on_retry = default_calculate_retry_enhanced;
+}
+
+/* Refresh */
+void curl_event_request_enable_refresh(curl_event_request_t *req,
+                                       uint64_t interval_ms,
+                                       bool backoff_on_errors)
+{
+    req->should_refresh = (interval_ms != 0);
+    req->refresh_interval_ms = interval_ms;
+    req->refresh_backoff_on_errors = backoff_on_errors;
+}
+
+/* Callbacks */
+void curl_event_request_on_complete(curl_event_request_t *req,
+                                    curl_event_on_complete_t cb) {
+    req->on_complete = cb;
+}
+void curl_event_request_on_failure(curl_event_request_t *req,
+                                   curl_event_on_failure_t cb) {
+    req->on_failure = cb;
+}
+void curl_event_request_on_write(curl_event_request_t *req,
+                                 curl_event_write_callback_t cb) {
+    req->write_cb = cb;
+}
+void curl_event_request_on_retry(curl_event_request_t *req,
+                                 curl_event_on_retry_t cb) {
+    req->on_retry = cb;
+}
+void curl_event_request_on_prepare(curl_event_request_t *req,
+                                   curl_event_on_prepare_t cb) {
+    req->on_prepare = cb;
+}
+
+/* output_data */
+void curl_event_request_output_data(curl_event_request_t *req,
+                                 void *output_data,
+                                 curl_event_cleanup_data_t cleanup) {
+    req->output_data = output_data;
+    req->output_data_cleanup = cleanup;
+}
+
+/* plugin_data */
+void curl_event_request_plugin_data(curl_event_request_t *req,
+                                    void *plugin_data,
+                                    curl_event_cleanup_data_t cleanup) {
+    req->plugin_data = plugin_data;
+    req->plugin_data_cleanup = cleanup;
+}
+
+
+/* Misc */
+void curl_event_request_should_refresh(curl_event_request_t *req) {
+    req->should_refresh = true;
+}
+void curl_event_request_max_download_size(curl_event_request_t *req, long bytes) {
+    req->max_download_size = bytes;
+}
+
+/* New ergonomics */
+void curl_event_request_priority(curl_event_request_t *req, int priority) {
+    req->priority = priority;
+}
+void curl_event_request_http3(curl_event_request_t *req, bool enable) {
+    req->http3_override = enable ? 1 : 0;
+}
+void curl_event_loop_enable_http3(curl_event_loop_t *loop, bool enable) {
+    loop->enable_http3 = enable;
+}
+
+ajson_t *curl_event_request_json_root(curl_event_request_t *req) {
+    return req->json_root;
+}
+
+ajson_t *curl_event_request_json_begin(curl_event_request_t *req, bool array_root) {
+    if (!req->json_root) {
+        req->json_root = array_root ? ajsona(req->pool) : ajsono(req->pool);
+        if (!req->method) req->method = aml_pool_strdup(req->pool, "POST");
+    }
+    return req->json_root;
+}
+
+void curl_event_request_json_autocontenttype(curl_event_request_t *req, bool enable) {
+    req->json_set_ct = enable;
+}
+
+/* Stringify JSON into post_data if post_data is not already set. */
+void curl_event_request_json_commit(curl_event_request_t *req) {
+    if (!req || !req->json_root || req->post_data) return;
+    const char *s = ajson_stringify(req->pool, req->json_root);
+    if (s) {
+        req->post_data = aml_pool_strdup(req->pool, s);
+        if (req->json_set_ct) {
+            curl_event_request_set_header(req, "Content-Type", "application/json");
+        }
+        if (!req->method) req->method = aml_pool_strdup(req->pool, "POST");
+    }
+}

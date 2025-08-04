@@ -16,10 +16,10 @@
 #define MAX_ACTIVE_REQUESTS 500
 #define MAX_RETRIES 3
 
-#define GOOGLE_PROJECT_ID your-google-cloud-project-id
+#define GOOGLE_PROJECT_ID "your-google-cloud-project-id"
 
 // --------------------------- CALLBACKS -------------------------------
-FILE *log;
+FILE *log_file;
 
 // Logging callback for download results
 void log_download_result(
@@ -32,9 +32,9 @@ void log_download_result(
     curl_event_request_t *req) {
     const char *source_file = (const char *)arg;
     if (success) {
-        fprintf(log, "[SUCCESS] Source: %s, File: %s\n", source_file, filename);
+        fprintf(log_file, "[SUCCESS] Source: %s, File: %s\n", source_file, filename);
     } else {
-        fprintf(log, "[FAILURE] Source: %s, File: %s, CURLcode: %d, HTTP code: %ld, Error: %s\n",
+        fprintf(log_file, "[FAILURE] Source: %s, File: %s, CURLcode: %d, HTTP code: %ld, Error: %s\n",
                 source_file, filename, result, http_code, error_msg ? error_msg : "Unknown error");
     }
 
@@ -49,7 +49,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    log = fopen("download_results.log", "w");
+    log_file = fopen("download_results.log", "w");
 
     const char *input_file_path = argv[1];
     const char *prefix = (argc > 2) ? argv[2] : "";
@@ -92,11 +92,11 @@ int main(int argc, char *argv[]) {
         curl_output_interface_t *output = file_output(dest_file, log_download_result, (void *)strdup(url));
 
         // Initialize a GCS download plugin
-        curl_event_plugin_gcs_download_init(loop, GOOGLE_PROJECT_ID, url, "gcloud_token", output);
+        curl_event_plugin_gcs_download_init(loop, GOOGLE_PROJECT_ID, url, "gcloud_token", output, 0);
     }
 
     fclose(input_file);
-    fclose(log);
+    fclose(log_file);
 
     // Run the event loop
     curl_event_loop_run(loop);

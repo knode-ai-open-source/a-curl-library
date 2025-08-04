@@ -13,7 +13,7 @@ set(CUSTOM_PACKAGES the-macro-library a-memory-library a-json-library the-lz4-li
 set(THIRD_PARTY_PACKAGES CURL::libcurl ZLIB libjwt)
 
 # Source files
-file(GLOB SOURCE_FILES src/*.c src/*/*.c)
+file(GLOB SOURCE_FILES src/*.c src/*/*.c src/*/*/*.c)
 
 find_package(a-cmake-library REQUIRED)
 
