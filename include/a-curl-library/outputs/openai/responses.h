@@ -1,25 +1,30 @@
 // SPDX-FileCopyrightText: 2025 Andy Curtis <contactandyc@gmail.com>
 // SPDX-License-Identifier: Apache-2.0
-#ifndef _CURL_OPENAI_RESPONSES_OUTPUT_H
-#define _CURL_OPENAI_RESPONSES_OUTPUT_H
+#ifndef CURL_OPENAI_RESPONSES_OUTPUT_H
+#define CURL_OPENAI_RESPONSES_OUTPUT_H
 
 #include "a-curl-library/curl_event_loop.h"
-#include <stdbool.h>
 
-// Callback type for OpenAI Responses completion
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Completion callback for /v1/responses */
 typedef void (*openai_responses_complete_callback_t)(
-    void *arg,
+    void                 *arg,
     curl_event_request_t *request,
-    bool success,
-    const char *output_text,
-    int prompt_tokens,
-    int completion_tokens,
-    int total_tokens
-);
+    bool                  success,
+    const char           *output_text,
+    int                   prompt_tokens,
+    int                   completion_tokens,
+    int                   total_tokens);
 
-curl_output_interface_t *openai_responses_output(
-    openai_responses_complete_callback_t complete_callback,
-    void *complete_callback_arg
-);
+/* Factory: returns a sink wired for curl_output_defaults() */
+curl_output_interface_t *
+openai_responses_output(openai_responses_complete_callback_t complete_cb,
+                        void                                *complete_arg);
 
-#endif // _CURL_OPENAI_RESPONSES_OUTPUT_H
+#ifdef __cplusplus
+}
+#endif
+#endif /* CURL_OPENAI_RESPONSES_OUTPUT_H */
