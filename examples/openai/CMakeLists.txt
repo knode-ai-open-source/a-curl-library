@@ -9,6 +9,7 @@ set(CUSTOM_PACKAGES a-curl-library)
 # One or more executables (the helper auto-creates targets)
 set(BINARY_SOURCES
     src/responses.c
+    src/embed_test.c
 )
 
 # Optional build-style toggles (pick one; DEBUG is on by default)

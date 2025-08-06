@@ -3,9 +3,9 @@
 //
 // OpenAI “/v1/responses” request builder
 // ─────────────────────────────────────────────────────────────────────────────
-#include "a-curl-library/plugins/openai/responses.h"
+#include "a-curl-library/plugins/openai/v1/responses.h"
 
-#include "a-curl-library/outputs/openai/responses.h"
+#include "a-curl-library/outputs/openai/v1/responses.h"
 #include "a-json-library/ajson.h"
 #include "a-memory-library/aml_pool.h"
 
@@ -24,10 +24,10 @@ typedef struct {
     curl_event_res_id api_key_id;      /* dependency providing the key      */
     curl_event_res_id prev_id_res;     /* 0 if none                         */
     ajson_t          *msg_array;       /* for messages-style input          */
-} openai_responses_pd_t;
+} openai_v1_responses_pd_t;
 
-#define PD(req)  ((openai_responses_pd_t *)(req)->plugin_data)
-#define SINK(req) ((openai_responses_output_t *)(req)->output_data)
+#define PD(req)  ((openai_v1_responses_pd_t *)(req)->plugin_data)
+#define SINK(req) ((openai_v1_responses_output_t *)(req)->output_data)
 
 /* -------------------------------------------------------------------------- */
 /*  on_prepare: add Authorization + previous_response_id                      */
@@ -35,7 +35,7 @@ typedef struct {
 static bool _on_prepare(curl_event_request_t *req)
 {
     if (!req || !req->plugin_data) return false;
-    openai_responses_pd_t *pd = PD(req);
+    openai_v1_responses_pd_t *pd = PD(req);
 
     /* Bearer token --------------------------------------------------------- */
     const char *key = (const char *)curl_event_res_peek(req->loop,
@@ -65,7 +65,7 @@ static bool _on_prepare(curl_event_request_t *req)
 /*  Builder                                                                   */
 /* -------------------------------------------------------------------------- */
 curl_event_request_t *
-openai_responses_new(curl_event_loop_t       *loop,
+openai_v1_responses_new(curl_event_loop_t       *loop,
                      curl_event_res_id        api_key_id,
                      const char              *model_id,
                      curl_output_interface_t *output_iface)
@@ -92,7 +92,7 @@ openai_responses_new(curl_event_loop_t       *loop,
     /* ------------------------------------------------------------------ */
     /*  Plugin data                                                       */
     /* ------------------------------------------------------------------ */
-    openai_responses_pd_t *pd = aml_pool_calloc(req->pool, 1, sizeof(*pd));
+    openai_v1_responses_pd_t *pd = aml_pool_calloc(req->pool, 1, sizeof(*pd));
     pd->api_key_id  = api_key_id;
     pd->prev_id_res = 0;
     pd->msg_array   = NULL;
@@ -119,7 +119,7 @@ openai_responses_new(curl_event_loop_t       *loop,
 /* -------------------------------------------------------------------------- */
 /*  Parameter helpers                                                         */
 /* -------------------------------------------------------------------------- */
-void openai_responses_set_temperature(curl_event_request_t *req, float t)
+void openai_v1_responses_set_temperature(curl_event_request_t *req, float t)
 {
     if (!req || t < 0) return;
     ajson_t *root = curl_event_request_json_begin(req, false);
@@ -127,7 +127,7 @@ void openai_responses_set_temperature(curl_event_request_t *req, float t)
                   ajson_number_stringf(req->pool, "%0.2f", t), false);
 }
 
-void openai_responses_set_max_output_tokens(curl_event_request_t *req, int n)
+void openai_v1_responses_set_max_output_tokens(curl_event_request_t *req, int n)
 {
     if (!req || n <= 0) return;
     ajson_t *root = curl_event_request_json_begin(req, false);
@@ -135,7 +135,7 @@ void openai_responses_set_max_output_tokens(curl_event_request_t *req, int n)
                   ajson_number(req->pool, n), false);
 }
 
-void openai_responses_set_instructions(curl_event_request_t *req,
+void openai_v1_responses_set_instructions(curl_event_request_t *req,
                                        const char *s)
 {
     if (!req || !s) return;
@@ -147,7 +147,7 @@ void openai_responses_set_instructions(curl_event_request_t *req,
 /* -------------------------------------------------------------------------- */
 /*  Inputs                                                                    */
 /* -------------------------------------------------------------------------- */
-void openai_responses_input_text(curl_event_request_t *req,
+void openai_v1_responses_input_text(curl_event_request_t *req,
                                  const char *text)
 {
     if (!req || !text) return;
@@ -157,7 +157,7 @@ void openai_responses_input_text(curl_event_request_t *req,
                   ajson_encode_str(req->pool, text), false);
 }
 
-void openai_responses_add_message(curl_event_request_t *req,
+void openai_v1_responses_add_message(curl_event_request_t *req,
                                   const char *role,
                                   const char *content)
 {
@@ -165,7 +165,7 @@ void openai_responses_add_message(curl_event_request_t *req,
     if (!role)    role    = "user";
     if (!content) content = "";
 
-    openai_responses_pd_t *pd = PD(req);
+    openai_v1_responses_pd_t *pd = PD(req);
     ajson_t *root = curl_event_request_json_begin(req, false);
 
     if (!pd->msg_array) {
@@ -181,7 +181,7 @@ void openai_responses_add_message(curl_event_request_t *req,
     ajsona_append(pd->msg_array, m);
 }
 
-void openai_responses_set_prompt(curl_event_request_t *req,
+void openai_v1_responses_set_prompt(curl_event_request_t *req,
                                  const char *id,
                                  const char *version)
 {
@@ -201,7 +201,7 @@ void openai_responses_set_prompt(curl_event_request_t *req,
 /* -------------------------------------------------------------------------- */
 /*  Chaining + extra deps                                                     */
 /* -------------------------------------------------------------------------- */
-void openai_responses_chain_previous_response(curl_event_request_t *req,
+void openai_v1_responses_chain_previous_response(curl_event_request_t *req,
                                               curl_event_res_id      prev_id_res)
 {
     if (!req || !prev_id_res) return;
@@ -209,7 +209,7 @@ void openai_responses_chain_previous_response(curl_event_request_t *req,
     curl_event_request_depend(req, prev_id_res);
 }
 
-void openai_responses_add_dependency(curl_event_request_t *req,
+void openai_v1_responses_add_dependency(curl_event_request_t *req,
                                      curl_event_res_id     dep_res)
 {
     if (!req || !dep_res) return;

@@ -3,7 +3,7 @@
 //
 // OpenAI “/v1/responses” – output sink
 // ─────────────────────────────────────────────────────────────────────────────
-#include "a-curl-library/outputs/openai/responses.h"
+#include "a-curl-library/outputs/openai/v1/responses.h"
 
 #include "a-json-library/ajson.h"
 #include "a-memory-library/aml_pool.h"
@@ -21,9 +21,9 @@ typedef struct {
     aml_pool_t       *pool;
     aml_buffer_t     *response_buffer;
 
-    openai_responses_complete_callback_t cb;
+    openai_v1_responses_complete_callback_t cb;
     void             *cb_arg;
-} openai_responses_output_t;
+} openai_v1_responses_output_t;
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */
@@ -31,7 +31,7 @@ typedef struct {
 static size_t write_cb(const void *ptr, size_t size, size_t nmemb,
                        curl_output_interface_t *iface)
 {
-    openai_responses_output_t *o = (void *)iface;
+    openai_v1_responses_output_t *o = (void *)iface;
     aml_buffer_append(o->response_buffer, ptr, size * nmemb);
     return size * nmemb;
 }
@@ -45,8 +45,9 @@ static int get_int(ajson_t *node, const char *k, int d)
 static void on_complete(curl_output_interface_t *iface,
                         curl_event_request_t    *req)
 {
-    openai_responses_output_t *o = (void *)iface;
+    openai_v1_responses_output_t *o = (void *)iface;
     const char *raw = aml_buffer_data(o->response_buffer);
+    printf( "RAW:\n\n%s\n\n", raw);
 
     ajson_t *json = ajson_parse_string(o->pool, raw);
     if (!json || ajson_is_error(json)) {
@@ -81,14 +82,14 @@ static void on_failure(CURLcode res, long http,
                        curl_output_interface_t *iface,
                        curl_event_request_t    *req)
 {
-    openai_responses_output_t *o = (void *)iface;
+    openai_v1_responses_output_t *o = (void *)iface;
     fprintf(stderr, "[openai.responses.output] HTTP %ld, CURL %d\n", http, res);
     o->cb(o->cb_arg, req, false, NULL, -1, -1, -1);
 }
 
 static bool init_sink(curl_output_interface_t *iface, long /*len*/)
 {
-    openai_responses_output_t *o = (void *)iface;
+    openai_v1_responses_output_t *o = (void *)iface;
     o->pool            = aml_pool_init(8192);
     o->response_buffer = aml_buffer_init(2048);
     return (o->pool && o->response_buffer);
@@ -96,7 +97,7 @@ static bool init_sink(curl_output_interface_t *iface, long /*len*/)
 
 static void destroy_sink(curl_output_interface_t *iface)
 {
-    openai_responses_output_t *o = (void *)iface;
+    openai_v1_responses_output_t *o = (void *)iface;
     if (o->pool)            aml_pool_destroy(o->pool);
     if (o->response_buffer) aml_buffer_destroy(o->response_buffer);
     aml_free(o);
@@ -106,10 +107,10 @@ static void destroy_sink(curl_output_interface_t *iface)
 /*  Factory                                                                   */
 /* -------------------------------------------------------------------------- */
 curl_output_interface_t *
-openai_responses_output(openai_responses_complete_callback_t cb,
+openai_v1_responses_output(openai_v1_responses_complete_callback_t cb,
                         void                                *cb_arg)
 {
-    openai_responses_output_t *o = aml_calloc(1, sizeof(*o));
+    openai_v1_responses_output_t *o = aml_calloc(1, sizeof(*o));
     if (!o) return NULL;
 
     o->cb     = cb;

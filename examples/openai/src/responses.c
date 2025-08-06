@@ -4,8 +4,8 @@
 #include "a-curl-library/curl_event_loop.h"
 #include "a-curl-library/curl_event_request.h"
 #include "a-curl-library/curl_resource.h"
-#include "a-curl-library/plugins/openai/responses.h"
-#include "a-curl-library/outputs/openai/responses.h"
+#include "a-curl-library/plugins/openai/v1/responses.h"
+#include "a-curl-library/outputs/openai/v1/responses.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,18 +65,18 @@ int main(int argc, char **argv)
 
     /* ----------  Build the request */
     curl_output_interface_t *sink =
-        openai_responses_output(on_openai_done, NULL);
+        openai_v1_responses_output(on_openai_done, NULL);
 
     curl_event_request_t *req =
-        openai_responses_new(loop, api_key_res, model_id, sink);
+        openai_v1_responses_new(loop, api_key_res, model_id, sink);
 
     /* fill in the request body */
-    openai_responses_input_text(req, prompt);
-    openai_responses_set_temperature(req, 0.7f);         // optional
-    openai_responses_set_max_output_tokens(req, 256);     // optional
+    openai_v1_responses_input_text(req, prompt);
+    // openai_v1_responses_set_temperature(req, 0.7f);         // optional
+    // openai_v1_responses_set_max_output_tokens(req, 256);     // optional
 
     /* ----------  Fire! */
-    openai_responses_submit(loop, req, /*priority*/0);
+    openai_v1_responses_submit(loop, req, /*priority*/0);
 
     curl_event_loop_run(loop);
     curl_event_loop_destroy(loop);

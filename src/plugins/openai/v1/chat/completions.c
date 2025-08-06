@@ -12,12 +12,12 @@ typedef struct {
     curl_event_res_id api_key_id;
     ajson_t          *messages;  /* persistent messages array */
     ajson_t          *stops;     /* persistent stop array (optional) */
-} openai_chat_ud_t;
+} openai_v1_chat_completions_ud_t;
 
 /* Prepare: set Authorization from API key resource. */
 static bool _on_prepare(curl_event_request_t *req) {
     if (!req || !req->output_data) return false;
-    openai_chat_ud_t *ud = (openai_chat_ud_t *)req->output_data;
+    openai_v1_chat_completions_ud_t *ud = (openai_v1_chat_completions_ud_t *)req->output_data;
 
     const char *key = (const char *)curl_event_res_peek(req->loop, ud->api_key_id);
     if (!key || !*key) {
@@ -32,7 +32,7 @@ static bool _on_prepare(curl_event_request_t *req) {
 }
 
 curl_event_request_t *
-openai_chat_new(curl_event_loop_t       *loop,
+openai_v1_chat_completions_new(curl_event_loop_t       *loop,
                 curl_event_res_id        api_key_id,
                 const char              *model_id,
                 curl_output_interface_t *output_iface)
@@ -55,7 +55,7 @@ openai_chat_new(curl_event_loop_t       *loop,
 
     /* deps + output_data */
     curl_event_request_depend(req, api_key_id);
-    openai_chat_ud_t *ud = (openai_chat_ud_t *)aml_pool_calloc(req->pool, 1, sizeof(*ud));
+    openai_v1_chat_completions_ud_t *ud = (openai_v1_chat_completions_ud_t *)aml_pool_calloc(req->pool, 1, sizeof(*ud));
     ud->api_key_id = api_key_id;
     req->output_data = ud;
     req->output_data_cleanup = NULL;
@@ -73,14 +73,14 @@ openai_chat_new(curl_event_loop_t       *loop,
 }
 
 /* Messages */
-void openai_chat_add_message(curl_event_request_t *req,
+void openai_v1_chat_completions_add_message(curl_event_request_t *req,
                              const char *role, const char *content)
 {
     if (!req) return;
     if (!role) role = "user";
     if (!content) content = "";
 
-    openai_chat_ud_t *ud = (openai_chat_ud_t *)req->output_data;
+    openai_v1_chat_completions_ud_t *ud = (openai_v1_chat_completions_ud_t *)req->output_data;
     ajson_t *root = curl_event_request_json_begin(req, false);
 
     if (!ud->messages) {
@@ -95,46 +95,46 @@ void openai_chat_add_message(curl_event_request_t *req,
 }
 
 /* Params */
-void openai_chat_set_temperature(curl_event_request_t *req, float t) {
+void openai_v1_chat_completions_set_temperature(curl_event_request_t *req, float t) {
     if (!req || t < 0.0f) return;
     ajson_t *root = curl_event_request_json_begin(req, false);
     ajsono_append(root, "temperature", ajson_number_stringf(req->pool, "%0.2f", t), false);
 }
-void openai_chat_set_top_p(curl_event_request_t *req, float p) {
+void openai_v1_chat_completions_set_top_p(curl_event_request_t *req, float p) {
     if (!req || p <= 0.0f || p > 1.0f) return;
     ajson_t *root = curl_event_request_json_begin(req, false);
     ajsono_append(root, "top_p", ajson_number_stringf(req->pool, "%0.3f", p), false);
 }
-void openai_chat_set_max_tokens(curl_event_request_t *req, int n) {
+void openai_v1_chat_completions_set_max_tokens(curl_event_request_t *req, int n) {
     if (!req || n <= 0) return;
     ajson_t *root = curl_event_request_json_begin(req, false);
     ajsono_append(root, "max_tokens", ajson_number(req->pool, n), false);
 }
-void openai_chat_set_presence_penalty(curl_event_request_t *req, float v) {
+void openai_v1_chat_completions_set_presence_penalty(curl_event_request_t *req, float v) {
     if (!req) return;
     ajson_t *root = curl_event_request_json_begin(req, false);
     ajsono_append(root, "presence_penalty", ajson_number_stringf(req->pool, "%0.2f", v), false);
 }
-void openai_chat_set_frequency_penalty(curl_event_request_t *req, float v) {
+void openai_v1_chat_completions_set_frequency_penalty(curl_event_request_t *req, float v) {
     if (!req) return;
     ajson_t *root = curl_event_request_json_begin(req, false);
     ajsono_append(root, "frequency_penalty", ajson_number_stringf(req->pool, "%0.2f", v), false);
 }
-void openai_chat_stream(curl_event_request_t *req, bool enable) {
+void openai_v1_chat_completions_stream(curl_event_request_t *req, bool enable) {
     if (!req) return;
     ajson_t *root = curl_event_request_json_begin(req, false);
     ajsono_append(root, "stream", enable ? ajson_true(req->pool) : ajson_false(req->pool), false);
 }
-void openai_chat_set_user(curl_event_request_t *req, const char *user) {
+void openai_v1_chat_completions_set_user(curl_event_request_t *req, const char *user) {
     if (!req || !user) return;
     ajson_t *root = curl_event_request_json_begin(req, false);
     ajsono_append(root, "user", ajson_encode_str(req->pool, user), false);
 }
 
 /* Stop tokens */
-void openai_chat_add_stop(curl_event_request_t *req, const char *token) {
+void openai_v1_chat_completions_add_stop(curl_event_request_t *req, const char *token) {
     if (!req || !token) return;
-    openai_chat_ud_t *ud = (openai_chat_ud_t *)req->output_data;
+    openai_v1_chat_completions_ud_t *ud = (openai_v1_chat_completions_ud_t *)req->output_data;
     ajson_t *root = curl_event_request_json_begin(req, false);
 
     if (!ud->stops) {
@@ -145,7 +145,7 @@ void openai_chat_add_stop(curl_event_request_t *req, const char *token) {
 }
 
 /* Extra deps */
-void openai_chat_add_dependency(curl_event_request_t *req, curl_event_res_id dep_res) {
+void openai_v1_chat_completions_add_dependency(curl_event_request_t *req, curl_event_res_id dep_res) {
     if (!req || !dep_res) return;
     curl_event_request_depend(req, dep_res);
 }
