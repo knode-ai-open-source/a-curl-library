@@ -5,7 +5,6 @@
 
 #include "a-curl-library/curl_event_request.h"
 #include "a-curl-library/curl_event_loop.h"
-#include "a-curl-library/curl_output.h"
 #include "a-curl-library/curl_resource.h"
 
 #ifdef __cplusplus
@@ -18,13 +17,11 @@ extern "C" {
 /* Creates an un-submitted POST /v1/embeddings request and wires:            *
  *   – api_key_id  → dependency (Bearer token added in on_prepare)          *
  *   – model_id    → {"model": "..."}                                       *
- *   – output_iface→ via curl_output_defaults()                             *
  * Per-request working state is stored in req->plugin_data.                 */
 curl_event_request_t *
 openai_v1_embeddings_new(curl_event_loop_t       *loop,
                  curl_event_res_id        api_key_id,
-                 const char              *model_id,
-                 curl_output_interface_t *output_iface);
+                 const char              *model_id);
 
 /* Helpers – inputs -------------------------------------------------------- */
 void openai_v1_embeddings_add_text (curl_event_request_t *req, const char *text);

@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2024-2025 Knode.ai
 // SPDX-License-Identifier: Apache-2.0
 // Maintainer: Andy Curtis <contactandyc@gmail.com>
-#ifndef _CURL_FILE_OUTPUT_H
-#define _CURL_FILE_OUTPUT_H
+#ifndef _CURL_FILE_SINK_H
+#define _CURL_FILE_SINK_H
 
 #include "a-curl-library/curl_event_loop.h"
+#include "a-curl-library/curl_event_request.h"
 
 #include <stdio.h>
 #include <stdbool.h>
@@ -21,14 +22,15 @@ typedef void (*file_complete_callback_t)(
 );
 
 /**
- * Create a file output interface for a given file.
+ * Create a file sink interface for a given file.
  *
- * @param filename The output file name.
+ * @param filename The sink file name.
  * @param callback Callback to invoke upon completion (can be NULL).
  * @param callback_arg Argument to pass to the callback function.
- * @return Pointer to a curl_output_interface_t.
+ * @return Pointer to a curl_sink_interface_t.
  */
-curl_output_interface_t *file_output(
+curl_sink_interface_t *file_sink(
+    curl_event_request_t *req,
     const char *filename,
     file_complete_callback_t callback,
     void *callback_arg);

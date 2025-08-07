@@ -4,8 +4,6 @@
 // OpenAI “/v1/responses” request builder
 // ─────────────────────────────────────────────────────────────────────────────
 #include "a-curl-library/plugins/openai/v1/responses.h"
-
-#include "a-curl-library/outputs/openai/v1/responses.h"
 #include "a-json-library/ajson.h"
 #include "a-memory-library/aml_pool.h"
 
@@ -27,7 +25,6 @@ typedef struct {
 } openai_v1_responses_pd_t;
 
 #define PD(req)  ((openai_v1_responses_pd_t *)(req)->plugin_data)
-#define SINK(req) ((openai_v1_responses_output_t *)(req)->output_data)
 
 /* -------------------------------------------------------------------------- */
 /*  on_prepare: add Authorization + previous_response_id                      */
@@ -67,10 +64,9 @@ static bool _on_prepare(curl_event_request_t *req)
 curl_event_request_t *
 openai_v1_responses_new(curl_event_loop_t       *loop,
                      curl_event_res_id        api_key_id,
-                     const char              *model_id,
-                     curl_output_interface_t *output_iface)
+                     const char              *model_id)
 {
-    if (!loop || !api_key_id || !model_id || !*model_id || !output_iface) {
+    if (!loop || !api_key_id || !model_id || !*model_id) {
         fprintf(stderr, "[openai.responses] invalid args\n");
         return NULL;
     }
@@ -83,11 +79,6 @@ openai_v1_responses_new(curl_event_loop_t       *loop,
 
     curl_event_request_url   (req, URL);
     curl_event_request_method(req, "POST");
-
-    /* ------------------------------------------------------------------ */
-    /*  Output sink → req->output_data                                    */
-    /* ------------------------------------------------------------------ */
-    curl_output_defaults(req, output_iface);
 
     /* ------------------------------------------------------------------ */
     /*  Plugin data                                                       */

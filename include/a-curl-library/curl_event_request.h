@@ -8,7 +8,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "a-curl-library/curl_output.h"
 #include "a-curl-library/curl_resource.h"
 #include "a-memory-library/aml_pool.h"
 #include "a-json-library/ajson.h"
@@ -34,8 +33,8 @@ typedef size_t (*curl_event_write_callback_t)(void *ptr, size_t size,
 typedef bool   (*curl_event_on_retry_t)  (struct curl_event_request_s *req);
 /* on_prepare: last chance to mutate the request on the loop thread */
 typedef bool   (*curl_event_on_prepare_t)(struct curl_event_request_s *req);
-/* cleanup for req->output_data when the request is destroyed */
-typedef void   (*curl_event_cleanup_data_t)(void *output_data);
+/* cleanup for req->sink_data when the request is destroyed */
+typedef void   (*curl_event_cleanup_data_t)(void *sink_data);
 
 /* --------------------------------------------------------------------- */
 /* Public request descriptor                                             */
@@ -76,8 +75,8 @@ typedef struct curl_event_request_s {
     curl_event_on_prepare_t     on_prepare;    /* optional */
 
     /*— user payload —*/
-    void *output_data;
-    curl_event_cleanup_data_t output_data_cleanup;
+    void *sink_data;
+    curl_event_cleanup_data_t sink_data_cleanup;
 
     void *plugin_data;
     curl_event_cleanup_data_t plugin_data_cleanup;
@@ -85,7 +84,7 @@ typedef struct curl_event_request_s {
 
     /*— misc flags / limits —*/
     bool should_refresh;           /* if true, re-enqueue after success     */
-    bool output_initialized;
+    bool sink_initialized;
     long max_download_size;        /* honored via C-Len and during body     */
 
     ajson_t  *json_root;            /* if set, stringified on submit when post_data==NULL */
@@ -103,6 +102,22 @@ typedef struct curl_event_request_s {
     uint64_t  refresh_interval_ms; /* 0 = disabled; loop resubmits if set   */
     bool      refresh_backoff_on_errors;
 } curl_event_request_t;
+
+/* Generic “sink sink” used by default callbacks ------------------------ */
+typedef struct curl_sink_interface_s {
+    aml_pool_t        *pool;
+    curl_event_request_t *request;
+
+    bool   (*init)    (struct curl_sink_interface_s *self, long content_len);
+    size_t (*write)   (const void *data, size_t size, size_t nmemb,
+                       struct curl_sink_interface_s *self);
+    void   (*failure) (CURLcode result, long http_code,
+                       struct curl_sink_interface_s *self,
+                       struct curl_event_request_s *req);
+    void   (*complete)(struct curl_sink_interface_s *self,
+                       struct curl_event_request_s *req);
+    void   (*destroy) (struct curl_sink_interface_s *self);
+} curl_sink_interface_t;
 
 /* --------------------------------------------------------------------- */
 /* Construction / submission                                             */
@@ -127,7 +142,7 @@ curl_event_request_t *
 curl_event_request_build_get(const char *url,
                              curl_event_write_callback_t write_cb,
                              curl_event_on_complete_t on_complete,
-                             void *output_data);
+                             void *sink_data);
 
 curl_event_request_t *
 curl_event_request_build_post(const char *url,
@@ -135,14 +150,14 @@ curl_event_request_build_post(const char *url,
                               const char *content_type,         /* e.g. "application/json" */
                               curl_event_write_callback_t write_cb,
                               curl_event_on_complete_t on_complete,
-                              void *output_data);
+                              void *sink_data);
 
 curl_event_request_t *
 curl_event_request_build_post_json(const char *url,
                                    const ajson_t *json,
                                    curl_event_write_callback_t write_cb,
                                    curl_event_on_complete_t on_complete,
-                                   void *output_data);
+                                   void *sink_data);
 
 /**
  * Create (or return existing) JSON root object.
@@ -234,10 +249,10 @@ void curl_event_request_on_retry(curl_event_request_t *req,
 void curl_event_request_on_prepare(curl_event_request_t *req,
                                    curl_event_on_prepare_t cb);
 
-/* output_data */
-void curl_event_request_output_data(curl_event_request_t *req,
-                                 void *output_data,
-                                 curl_event_cleanup_data_t cleanup);
+/* sink_data */
+void curl_event_request_sink(curl_event_request_t *req,
+                               curl_sink_interface_t *sink_iface,
+                               curl_event_cleanup_data_t cleanup);
 
 /* plugin data */
 void curl_event_request_plugin_data(curl_event_request_t *req,

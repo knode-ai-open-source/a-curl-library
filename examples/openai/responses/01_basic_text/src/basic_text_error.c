@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "a-curl-library/curl_event_loop.h"
+#include "a-curl-library/curl_event_request.h"
+#include "a-curl-library/curl_resource.h"
+#include "a-curl-library/plugins/openai/v1/responses.h"
+#include "a-curl-library/sinks/openai/v1/responses.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+static const char *MODEL_ID="gpt-this-model-does-not-exist";
+static const char *PROMPT  ="Should never succeed.";
+
+static void on_done(void*,curl_event_request_t*,bool ok,const char*,int,int,int){
+  fprintf(stderr, ok? "🔥 UNEXPECTED SUCCESS\n" : "✅ error path hit (as expected)\n");
+}
+int main(void){
+  const char *k=getenv("OPENAI_API_KEY"); if(!k||!*k){fprintf(stderr,"key?\n");return 1;}
+  curl_event_loop_t *loop=curl_event_loop_init(NULL,NULL);
+  curl_event_res_id kr=curl_event_res_register(loop,strdup(k),free);
+
+  curl_event_request_t *req=openai_v1_responses_new(loop,kr,MODEL_ID);
+  openai_v1_responses_sink(req,on_done,NULL);
+  openai_v1_responses_input_text(req,PROMPT);
+  openai_v1_responses_submit(loop,req,0);
+
+  curl_event_loop_run(loop);
+  curl_event_loop_destroy(loop);
+}

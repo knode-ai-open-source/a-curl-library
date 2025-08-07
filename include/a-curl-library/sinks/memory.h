@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2024-2025 Knode.ai
 // SPDX-License-Identifier: Apache-2.0
 // Maintainer: Andy Curtis <contactandyc@gmail.com>
-#ifndef _curl_memory_output_H
-#define _curl_memory_output_H
+#ifndef _curl_memory_sink_H
+#define _curl_memory_sink_H
 
 #include "a-curl-library/curl_event_loop.h"
+#include "a-curl-library/curl_event_request.h"
 
 #include <stdio.h>
 #include <stdbool.h>
@@ -21,7 +22,9 @@ typedef void (*memory_complete_callback_t)(
     curl_event_request_t *req
 );
 
-curl_output_interface_t *memory_output(memory_complete_callback_t callback,
-                                       void *callback_arg);
+curl_sink_interface_t *memory_sink(
+    curl_event_request_t *req,
+    memory_complete_callback_t callback,
+    void *callback_arg);
 
 #endif

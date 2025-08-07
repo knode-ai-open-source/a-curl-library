@@ -16,8 +16,8 @@ typedef struct {
 
 /* Prepare: set Authorization from API key resource. */
 static bool _on_prepare(curl_event_request_t *req) {
-    if (!req || !req->output_data) return false;
-    openai_v1_chat_completions_ud_t *ud = (openai_v1_chat_completions_ud_t *)req->output_data;
+    if (!req || !req->plugin_data) return false;
+    openai_v1_chat_completions_ud_t *ud = (openai_v1_chat_completions_ud_t *)req->plugin_data;
 
     const char *key = (const char *)curl_event_res_peek(req->loop, ud->api_key_id);
     if (!key || !*key) {
@@ -34,10 +34,9 @@ static bool _on_prepare(curl_event_request_t *req) {
 curl_event_request_t *
 openai_v1_chat_completions_new(curl_event_loop_t       *loop,
                 curl_event_res_id        api_key_id,
-                const char              *model_id,
-                curl_output_interface_t *output_iface)
+                const char              *model_id)
 {
-    if (!loop || api_key_id == 0 || !model_id || !*model_id || !output_iface) {
+    if (!loop || api_key_id == 0 || !model_id || !*model_id) {
         fprintf(stderr, "[openai.chat] invalid args\n");
         return NULL;
     }
@@ -47,18 +46,17 @@ openai_v1_chat_completions_new(curl_event_loop_t       *loop,
 
     curl_event_request_url(req, URL);
     curl_event_request_method(req, "POST");
-    curl_output_defaults(req, output_iface);
 
     curl_event_request_set_header(req, "Accept", "application/json");
     curl_event_request_low_speed(req, 1024, 60);
     curl_event_request_enable_retries(req, 3, 2.0, 250, 20000, true);
 
-    /* deps + output_data */
+    /* deps + plugin_data */
     curl_event_request_depend(req, api_key_id);
     openai_v1_chat_completions_ud_t *ud = (openai_v1_chat_completions_ud_t *)aml_pool_calloc(req->pool, 1, sizeof(*ud));
     ud->api_key_id = api_key_id;
-    req->output_data = ud;
-    req->output_data_cleanup = NULL;
+    req->plugin_data = ud;
+    req->plugin_data_cleanup = NULL;
 
     curl_event_request_on_prepare(req, _on_prepare);
 
@@ -80,7 +78,7 @@ void openai_v1_chat_completions_add_message(curl_event_request_t *req,
     if (!role) role = "user";
     if (!content) content = "";
 
-    openai_v1_chat_completions_ud_t *ud = (openai_v1_chat_completions_ud_t *)req->output_data;
+    openai_v1_chat_completions_ud_t *ud = (openai_v1_chat_completions_ud_t *)req->plugin_data;
     ajson_t *root = curl_event_request_json_begin(req, false);
 
     if (!ud->messages) {
@@ -134,7 +132,7 @@ void openai_v1_chat_completions_set_user(curl_event_request_t *req, const char *
 /* Stop tokens */
 void openai_v1_chat_completions_add_stop(curl_event_request_t *req, const char *token) {
     if (!req || !token) return;
-    openai_v1_chat_completions_ud_t *ud = (openai_v1_chat_completions_ud_t *)req->output_data;
+    openai_v1_chat_completions_ud_t *ud = (openai_v1_chat_completions_ud_t *)req->plugin_data;
     ajson_t *root = curl_event_request_json_begin(req, false);
 
     if (!ud->stops) {

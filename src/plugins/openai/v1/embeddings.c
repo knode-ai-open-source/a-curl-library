@@ -4,7 +4,6 @@
 // ──────────────────────────────────────────────────────────────────────────────
 //  OpenAI – “/v1/embeddings” request builder
 //      • Per-request state kept in req->plugin_data
-//      • Output sink attached via curl_output_defaults()
 // ──────────────────────────────────────────────────────────────────────────────
 #include "a-curl-library/plugins/openai/v1/embeddings.h"
 
@@ -55,10 +54,9 @@ static bool _on_prepare(curl_event_request_t *req)
 curl_event_request_t *
 openai_v1_embeddings_new(curl_event_loop_t       *loop,
                  curl_event_res_id        api_key_id,
-                 const char              *model_id,
-                 curl_output_interface_t *output_iface)
+                 const char              *model_id)
 {
-    if (!loop || api_key_id == 0 || !model_id || !*model_id || !output_iface) {
+    if (!loop || api_key_id == 0 || !model_id || !*model_id) {
         fprintf(stderr, "[openai.embed] invalid args\n");
         return NULL;
     }
@@ -69,9 +67,6 @@ openai_v1_embeddings_new(curl_event_loop_t       *loop,
 
     curl_event_request_url(req, URL);
     curl_event_request_method(req, "POST");
-
-    /* -------- attach output sink (sets req->output_data) ----------------- */
-    curl_output_defaults(req, output_iface);
 
     /* -------- allocate plugin-data in request pool ----------------------- */
     openai_v1_embeddings_pd_t *pd = (openai_v1_embeddings_pd_t *)

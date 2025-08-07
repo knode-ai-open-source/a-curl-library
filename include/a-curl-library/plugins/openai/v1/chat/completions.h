@@ -5,7 +5,6 @@
 
 #include "a-curl-library/curl_event_request.h"
 #include "a-curl-library/curl_event_loop.h"
-#include "a-curl-library/curl_output.h"
 #include "a-curl-library/curl_resource.h"
 #include "a-json-library/ajson.h"
 #include <stdbool.h>
@@ -17,13 +16,11 @@ extern "C" {
 /* Create an unsubmitted POST /v1/chat/completions request.
  * - Adds api_key_id as a dependency (Authorization set at on_prepare).
  * - Initializes JSON root and sets {"model": model_id}.
- * - Calls curl_output_defaults(output_iface).
  */
 curl_event_request_t *
 openai_v1_chat_completions_new(curl_event_loop_t       *loop,
                                curl_event_res_id        api_key_id,
-                               const char              *model_id,
-                               curl_output_interface_t *output_iface);
+                               const char              *model_id);
 
 /* Messages */
 void openai_v1_chat_completions_add_message(curl_event_request_t *req,

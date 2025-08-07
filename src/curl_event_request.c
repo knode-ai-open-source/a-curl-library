@@ -4,7 +4,6 @@
 
 #include "a-curl-library/impl/curl_event_priv.h"
 #include "a-curl-library/curl_event_request.h"
-#include "a-curl-library/curl_output.h"
 #include "a-curl-library/rate_manager.h"
 
 #include "a-memory-library/aml_alloc.h"
@@ -86,6 +85,68 @@ static bool default_calculate_retry_enhanced(curl_event_request_t *req) {
     return false;
 }
 
+static size_t default_on_write(void *data, size_t size, size_t nmemb, curl_event_request_t *req) {
+    curl_sink_interface_t *sink = (curl_sink_interface_t *)req->sink_data;
+    if(sink) {
+        if(!req->sink_initialized && sink->init) {
+            sink->init(sink, curl_event_request_content_length(req));
+            req->sink_initialized = true;
+        }
+        if (sink && sink->write) {
+            return sink->write(data, size, nmemb, sink);
+        }
+    }
+    return size * nmemb; // Default to consuming all data
+}
+
+static int default_on_complete(CURL *easy_handle, curl_event_request_t *req) {
+    (void)easy_handle; // Unused
+
+    curl_sink_interface_t *sink = (curl_sink_interface_t *)req->sink_data;
+    if (sink) {
+        if (!req->sink_initialized && sink->init) {
+            sink->init(sink, curl_event_request_content_length(req));
+            req->sink_initialized = true;
+        }
+        if (sink->complete) {
+            sink->complete(sink, req);
+        }
+    }
+    return 0; // Request succeeded
+}
+
+static int default_on_failure(CURL *easy_handle, CURLcode result, long http_code, curl_event_request_t *req) {
+    (void)easy_handle; // Unused
+
+    curl_sink_interface_t *sink = (curl_sink_interface_t *)req->sink_data;
+    if (sink) {
+        if (!req->sink_initialized && sink->init) {
+            sink->init(sink, curl_event_request_content_length(req));
+            req->sink_initialized = true;
+        }
+        if (sink->failure) {
+            sink->failure(result, http_code, sink, req);
+        }
+    }
+
+    return 0; // Failure is not transient
+}
+
+static void default_sink_destroy(void *sink_data) {
+    curl_sink_interface_t *sink = (curl_sink_interface_t *)sink_data;
+    if (sink && sink->destroy) {
+        sink->destroy(sink);
+    }
+}
+
+void curl_sink_defaults(curl_event_request_t *req) {
+    req->write_cb = default_on_write;
+    req->on_complete = default_on_complete;
+    req->on_failure = default_on_failure;
+    req->sink_data_cleanup = default_sink_destroy;
+    req->sink_data = NULL;
+}
+
 /* ────────────────────────────────────────────────────────────────────
    Public builder / lifecycle
    ──────────────────────────────────────────────────────────────────── */
@@ -136,14 +197,14 @@ curl_event_request_t *curl_event_request_new(size_t pool_size) {
     req->on_retry              = NULL;
     req->on_prepare            = NULL;
 
-    req->output_data              = NULL;
-    req->output_data_cleanup      = NULL;
+    req->sink_data              = NULL;
+    req->sink_data_cleanup      = NULL;
 
     req->plugin_data              = NULL;
     req->plugin_data_cleanup      = NULL;
 
     req->should_refresh        = false;
-    req->output_initialized    = false;
+    req->sink_initialized    = false;
     req->max_download_size     = 0;
 
     req->current_retries       = 0;
@@ -172,6 +233,8 @@ curl_event_request_t *curl_event_request_new(size_t pool_size) {
     req->json_root              = NULL;
     req->json_set_ct            = true;
 
+    curl_sink_defaults(req);
+
     return req;
 }
 
@@ -197,7 +260,7 @@ curl_event_request_t *
 curl_event_request_build_get(const char *url,
                              curl_event_write_callback_t write_cb,
                              curl_event_on_complete_t on_complete,
-                             void *output_data)
+                             void *sink_data)
 {
     curl_event_request_t *r = curl_event_request_new(0);
     if (!r) return NULL;
@@ -205,7 +268,7 @@ curl_event_request_build_get(const char *url,
     curl_event_request_method(r, "GET");
     curl_event_request_on_write(r, write_cb);
     curl_event_request_on_complete(r, on_complete);
-    curl_event_request_output_data(r, output_data, NULL);
+    curl_event_request_sink(r, sink_data, NULL);
     return r;
 }
 
@@ -215,7 +278,7 @@ curl_event_request_build_post(const char *url,
                               const char *content_type,
                               curl_event_write_callback_t write_cb,
                               curl_event_on_complete_t on_complete,
-                              void *output_data)
+                              void *sink_data)
 {
     curl_event_request_t *r = curl_event_request_new(0);
     if (!r) return NULL;
@@ -225,7 +288,7 @@ curl_event_request_build_post(const char *url,
     if (content_type) curl_event_request_set_header(r, "Content-Type", content_type);
     curl_event_request_on_write(r, write_cb);
     curl_event_request_on_complete(r, on_complete);
-    curl_event_request_output_data(r, output_data, NULL);
+    curl_event_request_sink(r, sink_data, NULL);
     return r;
 }
 
@@ -234,7 +297,7 @@ curl_event_request_build_post_json(const char *url,
                                    const ajson_t *json,
                                    curl_event_write_callback_t write_cb,
                                    curl_event_on_complete_t on_complete,
-                                   void *output_data)
+                                   void *sink_data)
 {
     curl_event_request_t *r = curl_event_request_new(0);
     if (!r) return NULL;
@@ -250,7 +313,7 @@ curl_event_request_build_post_json(const char *url,
     }
     curl_event_request_on_write(r, write_cb);
     curl_event_request_on_complete(r, on_complete);
-    curl_event_request_output_data(r, output_data, NULL);
+    curl_event_request_sink(r, sink_data, NULL);
     return r;
 }
 
@@ -266,8 +329,8 @@ curl_event_request_submitp(curl_event_loop_t *loop, curl_event_request_t *req)
 
 /* Forward decls for internal helpers used by loop */
 static bool setup_curl_handle(curl_event_loop_request_t *req, curl_event_loop_t *loop);
-static size_t write_thunk(void *ptr, size_t size, size_t nmemb, void *output_data);
-static size_t header_callback(char *buffer, size_t size, size_t nitems, void *output_data);
+static size_t write_thunk(void *ptr, size_t size, size_t nmemb, void *sink_data);
+static size_t header_callback(char *buffer, size_t size, size_t nitems, void *sink_data);
 
 curl_event_request_t *
 curl_event_request_submit(curl_event_loop_t *loop,
@@ -352,9 +415,9 @@ void curl_event_request_destroy(curl_event_loop_request_t *req) {
         req->request.headers = NULL;
     }
 
-    if (req->request.output_data && req->request.output_data_cleanup) {
-        req->request.output_data_cleanup(req->request.output_data);
-        req->request.output_data = NULL;
+    if (req->request.sink_data && req->request.sink_data_cleanup) {
+        req->request.sink_data_cleanup(req->request.sink_data);
+        req->request.sink_data = NULL;
     }
 
     if (req->request.plugin_data && req->request.plugin_data_cleanup) {
@@ -369,8 +432,8 @@ void curl_event_request_destroy(curl_event_loop_request_t *req) {
 }
 
 /* Enforce max_download_size in body phase; call user write_cb if allowed */
-static size_t write_thunk(void *ptr, size_t size, size_t nmemb, void *output_data) {
-    curl_event_request_t *pub = (curl_event_request_t *)output_data;
+static size_t write_thunk(void *ptr, size_t size, size_t nmemb, void *sink_data) {
+    curl_event_request_t *pub = (curl_event_request_t *)sink_data;
     curl_event_loop_request_t *req = wrap_from_public(pub);
     size_t total = size * nmemb;
 
@@ -393,9 +456,9 @@ static size_t write_thunk(void *ptr, size_t size, size_t nmemb, void *output_dat
 }
 
 /* Robust header parser for Content-Length with limits */
-static size_t header_callback(char *buffer, size_t size, size_t nitems, void *output_data) {
+static size_t header_callback(char *buffer, size_t size, size_t nitems, void *sink_data) {
     size_t total_size = size * nitems;
-    curl_event_loop_request_t *req = (curl_event_loop_request_t *)output_data;
+    curl_event_loop_request_t *req = (curl_event_loop_request_t *)sink_data;
     char *line = (char *)aml_calloc(1, total_size + 1);
     if (!line) return total_size;
     memcpy(line, buffer, total_size);
@@ -774,12 +837,14 @@ void curl_event_request_on_prepare(curl_event_request_t *req,
     req->on_prepare = cb;
 }
 
-/* output_data */
-void curl_event_request_output_data(curl_event_request_t *req,
-                                 void *output_data,
-                                 curl_event_cleanup_data_t cleanup) {
-    req->output_data = output_data;
-    req->output_data_cleanup = cleanup;
+/* sink_data */
+void curl_event_request_sink(curl_event_request_t *req,
+                               curl_sink_interface_t *sink_iface,
+                               curl_event_cleanup_data_t cleanup) {
+    sink_iface->request = req;
+    req->sink_data = sink_iface;
+    if(cleanup)
+        req->sink_data_cleanup = cleanup;
 }
 
 /* plugin_data */
