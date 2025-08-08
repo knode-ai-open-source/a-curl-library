@@ -52,7 +52,7 @@ static bool _on_prepare(curl_event_request_t *req)
 /*  Builder                                                                    */
 /* -------------------------------------------------------------------------- */
 curl_event_request_t *
-openai_v1_embeddings_new(curl_event_loop_t       *loop,
+openai_v1_embeddings_init(curl_event_loop_t       *loop,
                  curl_event_res_id        api_key_id,
                  const char              *model_id)
 {
@@ -62,7 +62,7 @@ openai_v1_embeddings_new(curl_event_loop_t       *loop,
     }
 
     /* -------- allocate request ------------------------------------------ */
-    curl_event_request_t *req = curl_event_request_new(0);
+    curl_event_request_t *req = curl_event_request_init(0);
     if (!req) return NULL;
 
     curl_event_request_url(req, URL);

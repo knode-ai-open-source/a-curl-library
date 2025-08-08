@@ -128,7 +128,7 @@ static void destroy_cb(curl_sink_interface_t *iface) {
 
 /* —————————————————— factory —————————————————— */
 curl_sink_interface_t *
-openai_v1_responses_stream_sink_new(
+openai_v1_responses_stream_sink_init(
     curl_event_request_t *req,
     const openai_v1_responses_stream_callbacks_t *cb,
     void *arg) {

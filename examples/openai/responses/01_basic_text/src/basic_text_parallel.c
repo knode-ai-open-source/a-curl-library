@@ -28,7 +28,7 @@ int main(void){
   curl_event_res_id kr=curl_event_res_register(loop,strdup(k),free);
 
   for(int i=0;i<5;i++){
-    curl_event_request_t *r=openai_v1_responses_new(loop,kr,MODEL_ID);
+    curl_event_request_t *r=openai_v1_responses_init(loop,kr,MODEL_ID);
     openai_v1_responses_sink(r, on_done,NULL);
     openai_v1_responses_input_text(r,PROMPTS[i]);
     openai_v1_responses_submit(loop,r,0);

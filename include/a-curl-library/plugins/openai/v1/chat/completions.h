@@ -18,7 +18,7 @@ extern "C" {
  * - Initializes JSON root and sets {"model": model_id}.
  */
 curl_event_request_t *
-openai_v1_chat_completions_new(curl_event_loop_t       *loop,
+openai_v1_chat_completions_init(curl_event_loop_t       *loop,
                                curl_event_res_id        api_key_id,
                                const char              *model_id);
 

@@ -41,7 +41,7 @@ typedef void   (*curl_event_cleanup_data_t)(void *sink_data);
 typedef struct curl_event_request_s {
     /*— ownership & wiring —*/
     curl_event_loop_t *loop;       /* set by submit()                       */
-    aml_pool_t        *pool;       /* request-owned pool (created in _new)  */
+    aml_pool_t        *pool;       /* request-owned pool (created in _init)  */
 
     /*— basic HTTP info —*/
     char *url;
@@ -121,7 +121,7 @@ typedef struct curl_sink_interface_s {
 
 /* --------------------------------------------------------------------- */
 /* Construction / submission                                             */
-curl_event_request_t *curl_event_request_new(size_t pool_size);
+curl_event_request_t *curl_event_request_init(size_t pool_size);
 curl_event_request_t *
 curl_event_request_submit(curl_event_loop_t *loop,
                           curl_event_request_t *req,
@@ -129,7 +129,7 @@ curl_event_request_submit(curl_event_loop_t *loop,
 curl_event_request_t *
 curl_event_request_submitp(curl_event_loop_t *loop,
                            curl_event_request_t *req); /* uses req->priority */
-void curl_event_request_free_unsubmitted(curl_event_request_t *req);
+void curl_event_request_destroy_unsubmitted(curl_event_request_t *req);
 
 /* applies the basic browser headers that many websites expect */
 void curl_event_request_apply_browser_profile(curl_event_request_t *r,

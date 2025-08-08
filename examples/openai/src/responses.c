@@ -68,7 +68,7 @@ int main(int argc, char **argv)
         openai_v1_responses_output(on_openai_done, NULL);
 
     curl_event_request_t *req =
-        openai_v1_responses_new(loop, api_key_res, model_id, sink);
+        openai_v1_responses_init(loop, api_key_res, model_id, sink);
 
     /* fill in the request body */
     openai_v1_responses_input_text(req, prompt);

@@ -20,7 +20,7 @@ static void on_done(void*,curl_event_request_t* req,bool ok,const char*txt,
 
   /* second run – should be cache hit */
   round=1;
-  curl_event_request_t *r2=openai_v1_responses_new(req->loop,
+  curl_event_request_t *r2=openai_v1_responses_init(req->loop,
         curl_event_res_register(req->loop,strdup(getenv("OPENAI_API_KEY")),free),
         MODEL_ID);
   openai_v1_responses_sink(r2,on_done,NULL);
@@ -34,7 +34,7 @@ int main(void){
   curl_event_loop_t *loop=curl_event_loop_init(NULL,NULL);
   curl_event_res_id kr=curl_event_res_register(loop,strdup(k),free);
 
-  curl_event_request_t *req=openai_v1_responses_new(loop,kr,MODEL_ID);
+  curl_event_request_t *req=openai_v1_responses_init(loop,kr,MODEL_ID);
   openai_v1_responses_sink(req,on_done,NULL);
   openai_v1_responses_input_text(req,PROMPT);
   openai_v1_responses_set_prompt_cache_key(req,CACHE_KEY);

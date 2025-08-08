@@ -62,7 +62,7 @@ static bool _on_prepare(curl_event_request_t *req)
 /*  Builder                                                                   */
 /* -------------------------------------------------------------------------- */
 curl_event_request_t *
-openai_v1_responses_new(curl_event_loop_t       *loop,
+openai_v1_responses_init(curl_event_loop_t       *loop,
                      curl_event_res_id        api_key_id,
                      const char              *model_id)
 {
@@ -74,7 +74,7 @@ openai_v1_responses_new(curl_event_loop_t       *loop,
     /* ------------------------------------------------------------------ */
     /*  Allocate request                                                  */
     /* ------------------------------------------------------------------ */
-    curl_event_request_t *req = curl_event_request_new(0);
+    curl_event_request_t *req = curl_event_request_init(0);
     if (!req) return NULL;
 
     curl_event_request_url   (req, URL);
@@ -105,6 +105,36 @@ openai_v1_responses_new(curl_event_loop_t       *loop,
                   ajson_encode_str(req->pool, model_id), false);
 
     return req;
+}
+
+/* Enable Structured Outputs */
+void openai_v1_responses_set_structured_output_json(
+    curl_event_request_t *req,
+    const char *name,        /* e.g. "ideas" */
+    ajson_t *json,
+    bool        strict);     /* true ⇒ add "strict":true */
+{
+    aml_pool_t *p   = req->pool;
+    ajson_t   *root = curl_event_request_json_root(req);
+
+    ajson_t *text = ajsono_scan(root,"text");
+    if (!text) { text = ajsono(p); ajsono_append(root,"text",text,false); }
+
+    ajson_t *fmt = ajsono(p);
+    ajsono_append(fmt,"name",   ajson_str(p,name),false);
+    ajsono_append(fmt,"type",   ajson_str(p,"json_schema"),false);
+    ajsono_append(fmt,"schema", json,false);
+    if (strict) ajsono_append(fmt,"strict", ajson_true(p),false);
+
+    ajsono_append(text,"format",fmt,false);
+}
+
+void openai_v1_responses_set_structured_output(curl_event_request_t *req,
+                                               const char *name,        /* e.g. "ideas" */
+                                               const char *schema_json, /* raw schema */
+                                               bool strict)             /* true ⇒ "strict":true */
+{
+    openai_v1_responses_set_structured_output_json(req, name, ajson_parse_string(req->pool,schema_json), strict);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -205,4 +235,124 @@ void openai_v1_responses_add_dependency(curl_event_request_t *req,
 {
     if (!req || !dep_res) return;
     curl_event_request_depend(req, dep_res);
+}
+
+/* ---------- internal: ensure we have an include array ---------- */
+static ajson_t *ensure_include_array(curl_event_request_t *req) {
+    ajson_t *root = curl_event_request_json_begin(req, false);
+    ajson_t *inc  = ajsono_scan(root, "include");
+    if (!inc || !ajson_is_array(inc)) {
+        inc = ajsona(req->pool);
+        /* Replace if present, append if missing */
+        ajsono_set(root, "include", inc, false);
+    }
+    return inc;
+}
+
+/* ---------- internal: dedupe check (linear; fine for tiny lists) ---------- */
+static bool include_contains(ajson_t *inc, const char *value) {
+    if (!inc || !ajson_is_array(inc) || !value) return false;
+    int n = ajsona_count(inc);
+    for (int i = 0; i < n; ++i) {
+        const char *s = ajson_to_str(ajsona_nth(inc, i), "");
+        if (s && strcmp(s, value) == 0) return true;
+    }
+    return false;
+}
+
+/* ---------- public: add / clear / set ---------- */
+void openai_v1_responses_add_include(curl_event_request_t *req,
+                                     const char *value)
+{
+    if (!req || !value || !*value) return;
+    ajson_t *inc = ensure_include_array(req);
+    if (!include_contains(inc, value)) {
+        ajsona_append(inc, ajson_str(req->pool, value));
+    }
+}
+
+void openai_v1_responses_clear_includes(curl_event_request_t *req)
+{
+    if (!req) return;
+    ajson_t *root = curl_event_request_json_begin(req, false);
+    /* simplest: drop the key entirely; next add will recreate it */
+    ajsono_remove(root, "include");
+}
+
+void openai_v1_responses_set_includes(curl_event_request_t *req,
+                                      const char *const *items, size_t count)
+{
+    if (!req) return;
+    ajson_t *root = curl_event_request_json_begin(req, false);
+
+    /* Build a fresh array (optionally dedupe as we go) */
+    ajson_t *arr = ajsona(req->pool);
+    if (items) {
+        for (size_t i = 0; i < count; ++i) {
+            const char *v = items[i];
+            if (v && *v && !include_contains(arr, v)) {
+                ajsona_append(arr, ajson_str(req->pool, v));
+            }
+        }
+    }
+    /* Replace existing or append new */
+    ajsono_set(root, "include", arr, false);
+}
+
+/* ---------- presets (unchanged externally) ---------- */
+void openai_v1_responses_include_stream_text_minimal(curl_event_request_t *req)
+{
+    if (!req) return;
+    openai_v1_responses_set_stream(req, true);
+    const char *inc[] = {
+        OPENAI_INC_STREAM_TEXT_DELTA,
+        OPENAI_INC_STREAM_TEXT_DONE
+    };
+    openai_v1_responses_set_includes(req, inc, sizeof inc / sizeof inc[0]);
+}
+
+void openai_v1_responses_include_stream_text_and_tools(curl_event_request_t *req)
+{
+    if (!req) return;
+    openai_v1_responses_set_stream(req, true);
+    const char *inc[] = {
+        OPENAI_INC_STREAM_TEXT_DELTA,
+        OPENAI_INC_STREAM_TEXT_DONE,
+        OPENAI_INC_FUNC_ARGS_DELTA,
+        OPENAI_INC_FUNC_ARGS_DONE
+    };
+    openai_v1_responses_set_includes(req, inc, sizeof inc / sizeof inc[0]);
+}
+
+void openai_v1_responses_include_input_image_urls(curl_event_request_t *req)
+{
+    if (!req) return;
+    openai_v1_responses_add_include(req, OPENAI_INC_INPUT_IMAGE_URL);
+}
+
+void openai_v1_responses_include_reasoning_encrypted(curl_event_request_t *req)
+{
+    if (!req) return;
+    openai_v1_responses_add_include(req, OPENAI_INC_REASONING_BLOB);
+}
+
+void openai_v1_responses_include_refusal(curl_event_request_t *req)
+{
+    if (!req) return;
+    openai_v1_responses_add_include(req, OPENAI_INC_REFUSAL_ANY);
+}
+
+void openai_v1_responses_include_debug(curl_event_request_t *req)
+{
+    if (!req) return;
+    openai_v1_responses_set_stream(req, true);
+    const char *inc[] = {
+        OPENAI_INC_STREAM_TEXT_DELTA,
+        OPENAI_INC_STREAM_TEXT_DONE,
+        OPENAI_INC_FUNC_ARGS_DELTA,
+        OPENAI_INC_FUNC_ARGS_DONE,
+        OPENAI_INC_REFUSAL_ANY,
+        OPENAI_INC_INPUT_IMAGE_URL,
+    };
+    openai_v1_responses_set_includes(req, inc, sizeof inc / sizeof inc[0]);
 }

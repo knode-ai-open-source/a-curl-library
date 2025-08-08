@@ -19,7 +19,7 @@ typedef struct {
 } openai_v1_responses_stream_callbacks_t;
 
 curl_sink_interface_t *
-openai_v1_responses_stream_sink_new(
+openai_v1_responses_stream_sink_init(
     curl_event_request_t *req,
     const openai_v1_responses_stream_callbacks_t *cbs,
     void *arg);

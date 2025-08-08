@@ -77,7 +77,7 @@ int main(void)
 
     /* 5. Build request */
     curl_event_request_t *req =
-        openai_v1_embeddings_new(loop, api_key_res,
+        openai_v1_embeddings_init(loop, api_key_res,
                          /*model*/ "text-embedding-3-small",
                          sink);
     if (!req) {

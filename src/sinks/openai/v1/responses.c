@@ -46,7 +46,7 @@ static void on_complete(curl_sink_interface_t *iface,
 {
     openai_v1_responses_sink_t *o = (void *)iface;
     const char *raw = aml_buffer_data(o->response_buffer);
-    printf( "RAW:\n\n%s\n\n", raw);
+    // printf( "RAW:\n\n%s\n\n", raw);
 
     aml_pool_t *pool = iface->pool;
     ajson_t *json = ajson_parse_string(pool, raw);

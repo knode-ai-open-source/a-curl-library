@@ -151,7 +151,7 @@ void curl_sink_defaults(curl_event_request_t *req) {
    Public builder / lifecycle
    ──────────────────────────────────────────────────────────────────── */
 
-curl_event_request_t *curl_event_request_new(size_t pool_size) {
+curl_event_request_t *curl_event_request_init(size_t pool_size) {
     size_t sz = (pool_size == 0) ? 4096 : pool_size;
 
     /* Request-owned pool */
@@ -238,7 +238,7 @@ curl_event_request_t *curl_event_request_new(size_t pool_size) {
     return req;
 }
 
-void curl_event_request_free_unsubmitted(curl_event_request_t *req_pub) {
+void curl_event_request_destroy_unsubmitted(curl_event_request_t *req_pub) {
     if (!req_pub) return;
     curl_event_loop_request_t *wrap = wrap_from_public(req_pub);
 
@@ -262,7 +262,7 @@ curl_event_request_build_get(const char *url,
                              curl_event_on_complete_t on_complete,
                              void *sink_data)
 {
-    curl_event_request_t *r = curl_event_request_new(0);
+    curl_event_request_t *r = curl_event_request_init(0);
     if (!r) return NULL;
     curl_event_request_url(r, url);
     curl_event_request_method(r, "GET");
@@ -280,7 +280,7 @@ curl_event_request_build_post(const char *url,
                               curl_event_on_complete_t on_complete,
                               void *sink_data)
 {
-    curl_event_request_t *r = curl_event_request_new(0);
+    curl_event_request_t *r = curl_event_request_init(0);
     if (!r) return NULL;
     curl_event_request_url(r, url);
     curl_event_request_method(r, "POST");
@@ -299,7 +299,7 @@ curl_event_request_build_post_json(const char *url,
                                    curl_event_on_complete_t on_complete,
                                    void *sink_data)
 {
-    curl_event_request_t *r = curl_event_request_new(0);
+    curl_event_request_t *r = curl_event_request_init(0);
     if (!r) return NULL;
     curl_event_request_url(r, url);
     curl_event_request_method(r, "POST");

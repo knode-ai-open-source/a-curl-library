@@ -50,7 +50,7 @@ static void first_done(char *data,size_t len,bool ok,
     printf("[first response id] %s\n", g_prev_response_id ? g_prev_response_id : "(null)");
 
     curl_event_request_t *req2 =
-        openai_v1_responses_new(g_loop, g_api_key_res, MODEL_ID);
+        openai_v1_responses_init(g_loop, g_api_key_res, MODEL_ID);
     openai_v1_responses_sink(req2, second_done, NULL);
     openai_v1_responses_input_text(req2, PROMPT_2);
 
@@ -75,7 +75,7 @@ int main(void)
     g_api_key_res = curl_event_res_register(g_loop, strdup(key), free);
 
     curl_event_request_t *req1 =
-        openai_v1_responses_new(g_loop, g_api_key_res, MODEL_ID);
+        openai_v1_responses_init(g_loop, g_api_key_res, MODEL_ID);
     memory_sink(req1, first_done, NULL);
 
     openai_v1_responses_input_text(req1, PROMPT_1);

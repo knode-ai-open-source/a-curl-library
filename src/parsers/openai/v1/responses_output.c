@@ -101,7 +101,7 @@ bool openai_responses_parse_output(aml_pool_t *pool,
           const char *part_type =
               ajson_to_str(ajsono_scan(p->value, "type"), "");
           if (!strcmp(part_type, "output_text")) {
-            const char *t = ajson_to_str(ajsono_scan(p->value, "text"), "");
+            const char *t = ajson_to_strd(pool, ajsono_scan(p->value, "text"), "");
             if (*t) {
               if (*aml_buffer_data(buf)) aml_buffer_append(buf, "\n", 1);
               aml_buffer_append(buf, t, strlen(t));

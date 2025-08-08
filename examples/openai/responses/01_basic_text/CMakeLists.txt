@@ -13,7 +13,11 @@ set(BINARY_SOURCES
     src/basic_text_parallel.c
     src/basic_text_cache_miss.c
     src/basic_text_error.c
-    src/basic_text_chain.c)
+    src/basic_text_chain.c
+    src/basic_text_instructions.c
+    src/basic_text_max_tokens.c
+    src/basic_text_temperature_sweep.c
+)
 
 # Optional build-style toggles (pick one; DEBUG is on by default)
 # set(STATIC_BUILD ON)

@@ -24,7 +24,7 @@ static curl_event_request_t *basic_req(curl_event_loop_t *loop,
                                        curl_event_res_id  key_id,
                                        const char        *url,
                                        const char        *method) {
-  curl_event_request_t *req = curl_event_request_new(0);
+  curl_event_request_t *req = curl_event_request_init(0);
   if (!req) return NULL;
   curl_event_request_url(req, url);
   curl_event_request_method(req, method);

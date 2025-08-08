@@ -28,7 +28,7 @@ int main(void)
     curl_event_res_id key_res = curl_event_res_register(loop,strdup(key),free);
 
     curl_event_request_t *req =
-        openai_v1_responses_new(loop,key_res,MODEL_ID);
+        openai_v1_responses_init(loop,key_res,MODEL_ID);
 
     openai_v1_responses_sink(req, on_done,NULL);
     openai_v1_responses_input_text(req,PROMPT);

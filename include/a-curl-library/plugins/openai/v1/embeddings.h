@@ -19,7 +19,7 @@ extern "C" {
  *   – model_id    → {"model": "..."}                                       *
  * Per-request working state is stored in req->plugin_data.                 */
 curl_event_request_t *
-openai_v1_embeddings_new(curl_event_loop_t       *loop,
+openai_v1_embeddings_init(curl_event_loop_t       *loop,
                  curl_event_res_id        api_key_id,
                  const char              *model_id);
 
