@@ -1,33 +1,35 @@
-// SPDX-FileCopyrightText: 2024-2025 Knode.ai
 // SPDX-License-Identifier: Apache-2.0
-// Maintainer: Andy Curtis <contactandyc@gmail.com>
+#include "the-macro-library/macro_test.h"
 #include "a-curl-library/worker_pool.h"
-#include <stdio.h>
-#include <unistd.h> // for sleep
-#include <stdlib.h>
 
-static void my_task(void *arg) {
-    int *num = (int *)arg;
-    printf("Thread got task: %d\n", *num);
-    // Do some work...
+#include <stdatomic.h>
+#include <stddef.h>
+
+static atomic_int g_count = 0;
+
+static void work(void *arg) {
+    (void)arg;
+    atomic_fetch_add_explicit(&g_count, 1, memory_order_relaxed);
+}
+
+MACRO_TEST(worker_pool_executes_all_tasks) {
+    g_count = 0;
+    const int threads = 4;
+    const int tasks   = 1000;
+
+    worker_pool_t *pool = worker_pool_init(threads);
+    for (int i = 0; i < tasks; ++i) {
+        worker_pool_push(pool, work, NULL);
+    }
+    worker_pool_destroy(pool); // joins workers after queue drains
+
+    MACRO_ASSERT_EQ_INT(atomic_load(&g_count), tasks);
 }
 
 int main(void) {
-    // Create a pool of 4 threads
-    worker_pool_t *pool = worker_pool_init(4);
-
-    // Enqueue a few tasks
-    for (int i = 0; i < 10; i++) {
-        int *num = malloc(sizeof(int));
-        *num = i;
-        worker_pool_push(pool, my_task, num);
-    }
-
-    // Wait a bit (simulate main doing something else)
-    sleep(2);
-
-    // Stop and destroy the pool
-    worker_pool_destroy(pool);
-
+    macro_test_case tests[8];
+    size_t test_count = 0;
+    MACRO_ADD(tests, worker_pool_executes_all_tasks);
+    macro_run_all("a-curl-library/worker_pool", tests, test_count);
     return 0;
 }

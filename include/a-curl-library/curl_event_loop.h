@@ -9,9 +9,11 @@
 #include "a-curl-library/curl_event_request.h"  /* brings in callbacks etc. */
 #include "a-curl-library/curl_resource.h"
 
-/* Forward declaration kept for completeness */
+#ifndef A_CURL_EVENT_LOOP_T_DECL
+#define A_CURL_EVENT_LOOP_T_DECL
 struct curl_event_loop_s;
 typedef struct curl_event_loop_s curl_event_loop_t;
+#endif
 
 /* Per‑iteration callback: return false to stop the loop */
 typedef bool (*curl_event_on_loop_t)(curl_event_loop_t *loop, void *arg);

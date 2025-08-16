@@ -50,7 +50,7 @@ typedef struct {
 
 static rate_manager_t *g_rate_manager = NULL;
 
-void rate_manager_init() {
+void rate_manager_init(void) {
     if(g_rate_manager)
         return;
 
@@ -210,7 +210,7 @@ int rate_manager_handle_429(const char *key) {
     return limit->backoff_seconds;
 }
 
-void rate_manager_destroy() {
+void rate_manager_destroy(void) {
     if (!g_rate_manager) return;
 
     pthread_mutex_lock(&g_rate_manager->mutex);

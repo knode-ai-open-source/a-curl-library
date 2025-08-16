@@ -16,9 +16,11 @@
 extern "C" {
 #endif
 
-/* Forward declarations */
+#ifndef A_CURL_EVENT_LOOP_T_DECL
+#define A_CURL_EVENT_LOOP_T_DECL
 struct curl_event_loop_s;
 typedef struct curl_event_loop_s curl_event_loop_t;
+#endif
 
 /* --------------------------------------------------------------------- */
 /* Callback typedefs                                                     */
@@ -141,23 +143,20 @@ void curl_event_request_apply_browser_profile(curl_event_request_t *r,
 curl_event_request_t *
 curl_event_request_build_get(const char *url,
                              curl_event_write_callback_t write_cb,
-                             curl_event_on_complete_t on_complete,
-                             void *sink_data);
+                             curl_event_on_complete_t on_complete);
 
 curl_event_request_t *
 curl_event_request_build_post(const char *url,
                               const char *body,                 /* may be NULL */
                               const char *content_type,         /* e.g. "application/json" */
                               curl_event_write_callback_t write_cb,
-                              curl_event_on_complete_t on_complete,
-                              void *sink_data);
+                              curl_event_on_complete_t on_complete);
 
 curl_event_request_t *
 curl_event_request_build_post_json(const char *url,
                                    const ajson_t *json,
                                    curl_event_write_callback_t write_cb,
-                                   curl_event_on_complete_t on_complete,
-                                   void *sink_data);
+                                   curl_event_on_complete_t on_complete);
 
 /**
  * Create (or return existing) JSON root object.

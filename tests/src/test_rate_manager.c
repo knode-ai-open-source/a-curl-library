@@ -1,65 +1,51 @@
-// SPDX-FileCopyrightText: 2024-2025 Knode.ai
 // SPDX-License-Identifier: Apache-2.0
-// Maintainer: Andy Curtis <contactandyc@gmail.com>
+#include "the-macro-library/macro_test.h"
 #include "a-curl-library/rate_manager.h"
-#include "the-macro-library/macro_time.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <time.h>
+#include <unistd.h>   // usleep
 
-// Test function to simulate requests
-void test_rate_manager() {
-    const char *test_key = "api_test";
-    int max_concurrent = 10;
-    int max_rps = 5;
-
-    printf("Setting rate limit for '%s' (max %d concurrent, %d requests per second)\n",
-           test_key, max_concurrent, max_rps);
-    rate_manager_set_limit(test_key, max_concurrent, max_rps);
-
-    printf("\n--- Testing rate limits ---\n");
-
-    // Try sending more requests than allowed per second
-    int allowed = 0, denied = 0;
-    uint64_t start_time = macro_now();
-
-    for (int i = 0; i < 10; i++) {
-        if (rate_manager_start_request(test_key, false)) {
-            allowed++;
-            printf("[✅] Request %d allowed\n", i + 1);
-        } else {
-            denied++;
-            printf("[❌] Request %d denied (rate limit reached)\n", i + 1);
-        }
-        usleep(10000); // 100ms between requests
-    }
-
-    uint64_t end_time = macro_now();
-    printf("\nAllowed requests: %d, Denied requests: %d\n", allowed, denied);
-    printf("Elapsed time: %.3f seconds\n\n", macro_time_diff(start_time, end_time));
-
-    // Simulate request completion
-    printf("--- Marking requests as done ---\n");
-    for (int i = 0; i < allowed; i++) {
-        rate_manager_request_done(test_key);
-        printf("[✔] Marked request %d as done\n", i + 1);
-        usleep(50000); // 50ms delay between each completion
-    }
-
-    // Test handling of 429 Too Many Requests
-    printf("\n--- Testing 429 Handling ---\n");
-    for (int i = 0; i < 5; i++) {
-        int backoff = rate_manager_handle_429(test_key);
-        printf("[⚠️] 429 received. Backoff time: %d seconds\n", backoff);
-        sleep(backoff);
-    }
-
-    printf("\nFinal backoff should not exceed 60 seconds...\n");
+static void sleep_ns(uint64_t ns) {
+    // best effort sleep (convert to microseconds; round up a bit)
+    uint64_t us = ns / 1000u;
+    if (us == 0) us = 1;
+    usleep((useconds_t)us);
 }
 
-int main() {
-    test_rate_manager();
+MACRO_TEST(rate_manager_basic_bucket) {
+    rate_manager_init();
+
+    // 1 rps to get a predictable wait, concurrency isn't enforced in this impl
+    rate_manager_set_limit("key1", /*max_concurrent*/1, /*max_rps*/1.0);
+
+    // First start should proceed immediately.
+    uint64_t w1 = rate_manager_start_request("key1", false);
+    MACRO_ASSERT_EQ_INT((int)(w1 == 0), 1);
+
+    // Immediately starting again should be throttled (need ~1s for new token).
+    uint64_t w2 = rate_manager_start_request("key1", false);
+    MACRO_ASSERT_TRUE(w2 > 0);
+
+    // Mark one request done so concurrent counter goes down (even if not used here).
+    rate_manager_request_done("key1");
+
+    // Wait until can proceed returns 0, then start.
+    for (;;) {
+        uint64_t wait_ns = rate_manager_can_proceed("key1", false);
+        if (wait_ns == 0) break;
+        sleep_ns(wait_ns);
+    }
+
+    uint64_t w3 = rate_manager_start_request("key1", false);
+    MACRO_ASSERT_EQ_INT((int)(w3 == 0), 1);
+    rate_manager_request_done("key1");
+
+    rate_manager_destroy();
+}
+
+int main(void) {
+    macro_test_case tests[8];
+    size_t test_count = 0;
+    MACRO_ADD(tests, rate_manager_basic_bucket);
+    macro_run_all("a-curl-library/rate_manager", tests, test_count);
     return 0;
 }

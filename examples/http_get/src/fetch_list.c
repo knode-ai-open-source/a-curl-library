@@ -3,7 +3,7 @@
 
 #include "a-curl-library/curl_event_loop.h"
 #include "a-curl-library/curl_event_request.h"
-#include "a-curl-library/outputs/memory.h"
+#include "a-curl-library/sinks/memory.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -76,18 +76,13 @@ int main(int argc, char **argv) {
         ctx->index = ++idx;
         ctx->url = strdup(s);
 
-        // one sink per request so each callback gets its own ctx via 'arg'
-        curl_output_interface_t *out = memory_output(on_mem_done, ctx);
-
         curl_event_request_t *r = curl_event_request_build_get(
             ctx->url,
             NULL,   // use sink instead of manual write callback
-            NULL,
-            out     // sink is the userdata used by curl_output_defaults
+            NULL
         );
 
-        // Wire default output (the sink calls on_mem_done with our ctx)
-        curl_output_defaults(r, out);
+        memory_sink(r, on_mem_done, ctx);
 
         // Optional: “browsery” headers (leave commented unless you need them)
         curl_event_request_apply_browser_profile(r, NULL, NULL);

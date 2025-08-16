@@ -13,7 +13,7 @@
  * Initializes a rate manager that keeps track of request limits for different keys.
  * This function must be called before using any other rate manager functions.
  */
-void rate_manager_init();
+void rate_manager_init(void);
 
 /**
  * Sets the rate limit for a given key (like a URL or API key).
@@ -56,6 +56,6 @@ int rate_manager_handle_429(const char *key);
 /**
  * Frees all memory associated with the rate manager.
  */
-void rate_manager_destroy();
+void rate_manager_destroy(void);
 
 #endif  // RATE_MANAGER_H

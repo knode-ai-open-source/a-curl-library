@@ -88,7 +88,7 @@ static inline int curl_event_request_compare(const curl_event_loop_request_t *a,
 static inline macro_multimap_insert(
     curl_event_request_insert,
     curl_event_loop_request_t,
-    curl_event_request_compare);
+    curl_event_request_compare)
 
 /* ------------------------------------------------------------------ */
 /* Full loop object (opaque to users) -------------------------------- */

@@ -3,7 +3,7 @@
 
 #include "a-curl-library/curl_event_loop.h"
 #include "a-curl-library/curl_event_request.h"
-#include "a-curl-library/outputs/memory.h"
+#include "a-curl-library/sinks/memory.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -31,17 +31,14 @@ int main(int argc, char **argv) {
     const char *url = argv[1];
 
     curl_event_loop_t *loop = curl_event_loop_init(NULL, NULL);
-    curl_output_interface_t *out = memory_output(on_mem_done, NULL);
-
     curl_event_request_t *r = curl_event_request_build_get(
         url,
-        NULL,   // using output sink instead of a manual write_cb
-        NULL,
-        out     // pass sink as userdata
+        NULL,   // using sink sink instead of a manual write_cb
+        NULL
     );
+    memory_sink(r, on_mem_done, NULL);
 
     // Optional hardening
-    curl_output_defaults(r, out);
     curl_event_request_apply_browser_profile(r, NULL, NULL);
     curl_event_request_connect_timeout(r, 10);   // seconds
     curl_event_request_transfer_timeout(r, 30);  // seconds

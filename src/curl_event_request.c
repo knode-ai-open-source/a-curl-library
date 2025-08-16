@@ -259,16 +259,16 @@ void curl_event_request_destroy_unsubmitted(curl_event_request_t *req_pub) {
 curl_event_request_t *
 curl_event_request_build_get(const char *url,
                              curl_event_write_callback_t write_cb,
-                             curl_event_on_complete_t on_complete,
-                             void *sink_data)
+                             curl_event_on_complete_t on_complete)
 {
     curl_event_request_t *r = curl_event_request_init(0);
     if (!r) return NULL;
     curl_event_request_url(r, url);
     curl_event_request_method(r, "GET");
-    curl_event_request_on_write(r, write_cb);
-    curl_event_request_on_complete(r, on_complete);
-    curl_event_request_sink(r, sink_data, NULL);
+    if(write_cb)
+        curl_event_request_on_write(r, write_cb);
+    if(on_complete)
+        curl_event_request_on_complete(r, on_complete);
     return r;
 }
 
@@ -277,8 +277,7 @@ curl_event_request_build_post(const char *url,
                               const char *body,
                               const char *content_type,
                               curl_event_write_callback_t write_cb,
-                              curl_event_on_complete_t on_complete,
-                              void *sink_data)
+                              curl_event_on_complete_t on_complete)
 {
     curl_event_request_t *r = curl_event_request_init(0);
     if (!r) return NULL;
@@ -286,9 +285,10 @@ curl_event_request_build_post(const char *url,
     curl_event_request_method(r, "POST");
     if (body) curl_event_request_body(r, body);
     if (content_type) curl_event_request_set_header(r, "Content-Type", content_type);
-    curl_event_request_on_write(r, write_cb);
-    curl_event_request_on_complete(r, on_complete);
-    curl_event_request_sink(r, sink_data, NULL);
+    if(write_cb)
+        curl_event_request_on_write(r, write_cb);
+    if(on_complete)
+        curl_event_request_on_complete(r, on_complete);
     return r;
 }
 
@@ -296,8 +296,7 @@ curl_event_request_t *
 curl_event_request_build_post_json(const char *url,
                                    const ajson_t *json,
                                    curl_event_write_callback_t write_cb,
-                                   curl_event_on_complete_t on_complete,
-                                   void *sink_data)
+                                   curl_event_on_complete_t on_complete)
 {
     curl_event_request_t *r = curl_event_request_init(0);
     if (!r) return NULL;
@@ -311,9 +310,10 @@ curl_event_request_build_post_json(const char *url,
         /* Fallback to empty object if serializer not provided */
         curl_event_request_body(r, "{}");
     }
-    curl_event_request_on_write(r, write_cb);
-    curl_event_request_on_complete(r, on_complete);
-    curl_event_request_sink(r, sink_data, NULL);
+    if(write_cb)
+        curl_event_request_on_write(r, write_cb);
+    if(on_complete)
+        curl_event_request_on_complete(r, on_complete);
     return r;
 }
 
