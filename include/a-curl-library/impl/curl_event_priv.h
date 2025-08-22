@@ -1,7 +1,6 @@
-// SPDX-FileCopyrightText: 2024‑2025 Knode.ai
-// SPDX-License-Identifier: Apache‑2.0
-//
-// ░░  INTERNAL HEADER – do NOT install or include from user code  ░░
+// SPDX-FileCopyrightText: 2025 Andy Curtis <contactandyc@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
 #ifndef A_CURL_LIBRARY_IMPL_CURL_EVENT_PRIV_H
 #define A_CURL_LIBRARY_IMPL_CURL_EVENT_PRIV_H
 

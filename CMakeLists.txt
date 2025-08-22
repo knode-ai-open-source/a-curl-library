@@ -1,182 +1,265 @@
+# SPDX-FileCopyrightText: 2025 Andy Curtis <contactandyc@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
+# CMakeLists.txt for libraries (regular or header-only)
 cmake_minimum_required(VERSION 3.20)
-project(a_curl_library VERSION 1.0.0 LANGUAGES C)
 
-# ---- Unified build variant (used by build & consumers) ----
-set(A_BUILD_VARIANT "debug" CACHE STRING "Build/install variant (debug|memory|coverage|static|shared)")
-set_property(CACHE A_BUILD_VARIANT PROPERTY STRINGS debug memory coverage static shared)
-
-# ---- Flavor knobs (kept consistent with your other libs) ----
-set(A_BUILD_MEMORY_DEFINE "_AML_DEBUG_" CACHE STRING "Macro for memory variant")
-set(A_BUILD_DEBUG_POSTFIX ""            CACHE STRING "Debug filename postfix")
-set(A_BUILD_IMPORT_NAME   ""            CACHE STRING "Exported target name for this flavor")
-
-# ---- Sources ----
-add_library(${PROJECT_NAME}
-  src/curl_event_loop.c
-  src/curl_event_request.c
-  src/curl_resource.c
-  src/rate_manager.c
-  src/worker_pool.c
-  src/sinks/memory.c
-  src/sinks/file.c
+project(a_curl_library
+  VERSION 0.0.1
+  LANGUAGES C
 )
+# ── Variant selection for the umbrella alias (NOT for building) ───────────────
+# We build ALL variant targets below; this just selects which one the umbrella
+# alias (a_curl_library::a_curl_library) points to during this configure.
+set(A_BUILD_VARIANT "debug" CACHE STRING
+    "Umbrella choice for in-tree linking (debug|memory|static|shared)")
+set_property(CACHE A_BUILD_VARIANT PROPERTY STRINGS debug memory static shared)
 
-set_target_properties(${PROJECT_NAME} PROPERTIES
-  C_STANDARD 11
-  C_STANDARD_REQUIRED YES
-)
+# ── Developer-only coverage toggle (applies to this entire CMake tree) ────────
+option(A_ENABLE_COVERAGE "Enable code coverage instrumentation for this build" OFF)
+if(A_ENABLE_COVERAGE)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    add_compile_options(-O0 -g -fprofile-instr-generate -fcoverage-mapping)
+    add_link_options(-fprofile-instr-generate -fcoverage-mapping)
+  elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(-O0 -g --coverage)
+    add_link_options(--coverage)
+  endif()
+endif()
 
-# make consumers also compile as C11
-target_compile_features(${PROJECT_NAME} PUBLIC c_std_11)
+# Memory-profile convenience for the *_memory variant
+option(A_BUILD_ENABLE_MEMORY_PROFILE "Define a macro on the 'memory' variant" OFF)
+set(A_BUILD_MEMORY_DEFINE "_AML_DEBUG_" CACHE STRING
+    "Macro to define on the 'memory' variant when memory profiling is enabled")
 
-target_include_directories(${PROJECT_NAME} PUBLIC
+# Emulate Debug/Release per-variant (so one configure can build both kinds)
+if(MSVC)
+  set(_A_DEBUG_OPTS /Zi /Od)
+  set(_A_RELEASE_OPTS /O2 /DNDEBUG)
+else()
+  set(_A_DEBUG_OPTS -O0 -g)
+  set(_A_RELEASE_OPTS -O3 -DNDEBUG)
+endif()
+
+include(GNUInstallDirs)
+
+# ---- Dependencies ----
+find_package(a_json_library CONFIG REQUIRED)
+find_package(CURL REQUIRED)
+
+# ── Library variants (ALL are defined & built/installed) ──────────────────────
+add_library(a_curl_library_debug  src/curl_event_loop.c  src/curl_event_request.c  src/curl_resource.c  src/rate_manager.c  src/sinks/file.c  src/sinks/memory.c  src/worker_pool.c)
+
+target_include_directories(a_curl_library_debug PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
-set_target_properties(${PROJECT_NAME} PROPERTIES
-  C_STANDARD 99
+set_target_properties(a_curl_library_debug PROPERTIES
+  C_STANDARD 17
   C_STANDARD_REQUIRED YES
+  POSITION_INDEPENDENT_CODE ON
 )
 
-# ---- Variant-specific compile settings ----
-if(A_BUILD_VARIANT STREQUAL "memory")
-  target_compile_definitions(${PROJECT_NAME} PUBLIC ${A_BUILD_MEMORY_DEFINE})
-elseif(A_BUILD_VARIANT STREQUAL "coverage")
-  if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-    target_compile_options(${PROJECT_NAME} PRIVATE -O0 -g -fprofile-instr-generate -fcoverage-mapping)
-    target_link_options(${PROJECT_NAME}    PRIVATE -fprofile-instr-generate)
-  elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(${PROJECT_NAME} PRIVATE -O0 -g --coverage)
-    target_link_options(${PROJECT_NAME}    PRIVATE --coverage)
-  endif()
+if("CXX" IN_LIST CMAKE_PROJECT_LANGUAGES)
+  set_target_properties(a_curl_library_debug PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+  )
 endif()
 
-# Debug postfix (your build scripts typically set this per variant)
-if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND A_BUILD_DEBUG_POSTFIX)
-  set_target_properties(${PROJECT_NAME} PROPERTIES DEBUG_POSTFIX "${A_BUILD_DEBUG_POSTFIX}")
-endif()
+# Link deps once
+target_link_libraries(a_curl_library_debug PUBLIC  a_json_library::a_json_library  CURL::libcurl)
 
-# Avoid DLL import-lib vs static name clash on Windows
-if(WIN32 AND NOT BUILD_SHARED_LIBS)
-  set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "${PROJECT_NAME}_s")
-endif()
+# Per-variant optimization flavor
+target_compile_options(a_curl_library_debug PRIVATE ${_A_DEBUG_OPTS})
 
-# ---- Dependencies ----
-# the_macro_library is header-only but exports a CMake package/target
-find_package(Threads REQUIRED)
-find_package(CURL REQUIRED)  # provides CURL::libcurl
-find_package(a_memory_library  CONFIG REQUIRED)
-find_package(a_json_library    CONFIG REQUIRED)
-find_package(the_macro_library CONFIG REQUIRED)
+# Memory profiling macro on the memory variant (opt-in)
 
-target_link_libraries(${PROJECT_NAME} PUBLIC
-  a_memory_library::a_memory_library
-  a_json_library::a_json_library
-  the_macro_library::the_macro_library
-  CURL::libcurl
-  Threads::Threads
-)
-
-# ---- Install/export ----
-include(GNUInstallDirs)
-
-# Give each installed variant a distinct imported target name by default
-if(NOT A_BUILD_IMPORT_NAME)
-  set(A_BUILD_IMPORT_NAME "${PROJECT_NAME}_${A_BUILD_VARIANT}")
-endif()
-set_target_properties(${PROJECT_NAME} PROPERTIES EXPORT_NAME "${A_BUILD_IMPORT_NAME}")
-
-install(TARGETS ${PROJECT_NAME}
-  EXPORT ${PROJECT_NAME}Targets
+# Install this variant
+install(TARGETS a_curl_library_debug EXPORT a_curl_libraryTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+add_library(a_curl_library_memory  src/curl_event_loop.c  src/curl_event_request.c  src/curl_resource.c  src/rate_manager.c  src/sinks/file.c  src/sinks/memory.c  src/worker_pool.c)
+
+target_include_directories(a_curl_library_memory PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
-# Export file suffix equals the variant (debug|memory|coverage|static|shared)
-set(A_BUILD_EXPORT_FILE_SUFFIX "${A_BUILD_VARIANT}")
-
-install(EXPORT ${PROJECT_NAME}Targets
-  FILE       "${PROJECT_NAME}Targets-${A_BUILD_EXPORT_FILE_SUFFIX}.cmake"
-  NAMESPACE  ${PROJECT_NAME}::
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}
+set_target_properties(a_curl_library_memory PROPERTIES
+  C_STANDARD 17
+  C_STANDARD_REQUIRED YES
+  POSITION_INDEPENDENT_CODE ON
 )
 
-install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+if("CXX" IN_LIST CMAKE_PROJECT_LANGUAGES)
+  set_target_properties(a_curl_library_memory PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+  )
+endif()
 
-# ---- Package config template (runtime variant selection) ----
-set(A_BUILD_VARIANTS "debug;memory;coverage;static;shared")
+# Link deps once
+target_link_libraries(a_curl_library_memory PUBLIC  a_json_library::a_json_library  CURL::libcurl)
+
+# Per-variant optimization flavor
+target_compile_options(a_curl_library_memory PRIVATE ${_A_DEBUG_OPTS})
+
+# Memory profiling macro on the memory variant (opt-in)
+if(A_BUILD_ENABLE_MEMORY_PROFILE)
+  target_compile_definitions(a_curl_library_memory PUBLIC ${A_BUILD_MEMORY_DEFINE})
+endif()
+
+# Install this variant
+install(TARGETS a_curl_library_memory EXPORT a_curl_libraryTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+add_library(a_curl_library_static  src/curl_event_loop.c  src/curl_event_request.c  src/curl_resource.c  src/rate_manager.c  src/sinks/file.c  src/sinks/memory.c  src/worker_pool.c)
+
+target_include_directories(a_curl_library_static PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+
+set_target_properties(a_curl_library_static PROPERTIES
+  C_STANDARD 17
+  C_STANDARD_REQUIRED YES
+  POSITION_INDEPENDENT_CODE ON
+)
+
+if("CXX" IN_LIST CMAKE_PROJECT_LANGUAGES)
+  set_target_properties(a_curl_library_static PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+  )
+endif()
+
+# Link deps once
+target_link_libraries(a_curl_library_static PUBLIC  a_json_library::a_json_library  CURL::libcurl)
+
+# Per-variant optimization flavor
+target_compile_options(a_curl_library_static PRIVATE ${_A_RELEASE_OPTS})
+
+# Memory profiling macro on the memory variant (opt-in)
+
+# Install this variant
+install(TARGETS a_curl_library_static EXPORT a_curl_libraryTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+add_library(a_curl_library_shared  src/curl_event_loop.c  src/curl_event_request.c  src/curl_resource.c  src/rate_manager.c  src/sinks/file.c  src/sinks/memory.c  src/worker_pool.c)
+
+target_include_directories(a_curl_library_shared PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+
+set_target_properties(a_curl_library_shared PROPERTIES
+  C_STANDARD 17
+  C_STANDARD_REQUIRED YES
+  POSITION_INDEPENDENT_CODE ON
+)
+
+if("CXX" IN_LIST CMAKE_PROJECT_LANGUAGES)
+  set_target_properties(a_curl_library_shared PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+  )
+endif()
+
+# Link deps once
+target_link_libraries(a_curl_library_shared PUBLIC  a_json_library::a_json_library  CURL::libcurl)
+
+# Per-variant optimization flavor
+target_compile_options(a_curl_library_shared PRIVATE ${_A_RELEASE_OPTS})
+
+# Memory profiling macro on the memory variant (opt-in)
+
+# Install this variant
+install(TARGETS a_curl_library_shared EXPORT a_curl_libraryTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+# In-tree umbrella alias picking one variant (for unified builds)
+string(REPLACE "-" "_" _variant_us "${A_BUILD_VARIANT}")
+set(_sel_tgt "a_curl_library_${_variant_us}")
+if(TARGET "${_sel_tgt}")
+  add_library(a_curl_library::a_curl_library ALIAS ${_sel_tgt})
+endif()
+
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/"
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+
+# Export all variant targets together
+install(EXPORT a_curl_libraryTargets
+  FILE a_curl_libraryTargets.cmake
+  NAMESPACE a_curl_library::
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/a_curl_library)
+
+# ---- Package config with umbrella target -------------------------------------
 set(_CFG_IN "${CMAKE_CURRENT_BINARY_DIR}/config.cmake.in")
 file(WRITE "${_CFG_IN}" [=[
 @PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
 
-function(_@A_BUILD_TARGET_BASENAME@_cfg)
-  include(CMakeFindDependencyMacro)
+if(NOT DEFINED A_BUILD_VARIANT OR A_BUILD_VARIANT STREQUAL "")
+  set(A_BUILD_VARIANT "debug")
+endif()
+string(REPLACE "-" "_" _picked_us "${A_BUILD_VARIANT}")
 
-  set(_pkg "@A_BUILD_TARGET_BASENAME@")
-  set(_ns  "@A_BUILD_EXPORT_NAMESPACE@")
-  # Use non-CONFIG find for maximum compatibility (works with Config & Find modules)
-  set(_deps "@A_BUILD_DEPS@")
-  set(_flavors "@A_BUILD_VARIANTS@")
-
-  foreach(_dep IN LISTS _deps)
-    if(_dep)
-      find_dependency("${_dep}" REQUIRED)
-    endif()
-  endforeach()
-
-  if(NOT TARGET ${_ns}::${_pkg})
-    add_library(${_ns}::${_pkg} INTERFACE IMPORTED)
+set(_save_variant "${A_BUILD_VARIANT}")
+set(_deps "@A_BUILD_DEPS@")
+foreach(_dep IN LISTS _deps)
+  if(_dep)
+    find_dependency("${_dep}" REQUIRED)
   endif()
+endforeach()
+set(A_BUILD_VARIANT "${_save_variant}")
 
-  if(NOT DEFINED A_BUILD_VARIANT)
-    set(A_BUILD_VARIANT "debug")
-  endif()
-  list(FIND _flavors "${A_BUILD_VARIANT}" _idx)
-  if(_idx EQUAL -1)
-    message(FATAL_ERROR "${_pkg}: variant '${A_BUILD_VARIANT}' not recognized (must be one of: ${_flavors})")
-  endif()
+include("${CMAKE_CURRENT_LIST_DIR}/a_curl_libraryTargets.cmake")
 
-  set(_picked "${A_BUILD_VARIANT}")
-  set(_dir "${CMAKE_CURRENT_LIST_DIR}")
-  set(_f "${_pkg}Targets-${_picked}.cmake")
-  if(EXISTS "${_dir}/${_f}")
-    include("${_dir}/${_f}")
-  else()
-    message(FATAL_ERROR "${_pkg}: variant '${_picked}' not installed.")
-  endif()
+set(_ns "@A_BUILD_EXPORT_NAMESPACE@")
+set(_pkg "@A_BUILD_TARGET_BASENAME@")
+if(NOT TARGET ${_ns}::${_pkg})
+  add_library(${_ns}::${_pkg} INTERFACE IMPORTED)
+endif()
 
-  string(REPLACE "-" "_" _picked_us "${_picked}")
-  set(_pick ${_ns}::${_pkg}_${_picked_us})
-  if(TARGET "${_pick}")
-    target_link_libraries(${_ns}::${_pkg} INTERFACE "${_pick}")
-  else()
-    message(FATAL_ERROR "${_pkg}: expected target '${_pick}' not defined by export.")
-  endif()
-
-  # Normalize imported configs
-  set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release)
-  set(CMAKE_MAP_IMPORTED_CONFIG_MINSIZEREL    Release)
-endfunction()
-
-_@A_BUILD_TARGET_BASENAME@_cfg()
+set(_pick ${_ns}::${_pkg}_${_picked_us})
+if(TARGET "${_pick}")
+  target_link_libraries(${_ns}::${_pkg} INTERFACE "${_pick}")
+endif()
 ]=])
 
-# Inject variables and configure the package file
-set(A_BUILD_TARGET_BASENAME  "${PROJECT_NAME}")
-set(A_BUILD_EXPORT_NAMESPACE "${PROJECT_NAME}")
-# Mixed deps (Config + Find): use generic find_dependency in the template
-set(A_BUILD_DEPS "a_memory_library;a_json_library;the_macro_library;CURL;Threads")
+set(A_BUILD_TARGET_BASENAME "a_curl_library")
+set(A_BUILD_EXPORT_NAMESPACE "a_curl_library")
+set(A_BUILD_DEPS "a_json_library;CURL")
 
 include(CMakePackageConfigHelpers)
 configure_package_config_file(
   "${_CFG_IN}"
-  "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}Config.cmake"
-  INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}"
+  "${CMAKE_CURRENT_BINARY_DIR}/a_curl_libraryConfig.cmake"
+  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/a_curl_library
 )
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/a_curl_libraryConfigVersion.cmake"
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY SameMajorVersion
+)
+install(FILES
+  "${CMAKE_CURRENT_BINARY_DIR}/a_curl_libraryConfig.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/a_curl_libraryConfigVersion.cmake"
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/a_curl_library
+)
+# Extra project-specific targets
 
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}Config.cmake"
-        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
+
+enable_testing()
+add_subdirectory(tests)

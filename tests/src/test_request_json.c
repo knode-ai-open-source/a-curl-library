@@ -1,4 +1,6 @@
+// SPDX-FileCopyrightText: 2025 Andy Curtis <contactandyc@gmail.com>
 // SPDX-License-Identifier: Apache-2.0
+
 #include "the-macro-library/macro_test.h"
 #include "a-curl-library/curl_event_request.h"
 #include "a-json-library/ajson.h"

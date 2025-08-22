@@ -1,6 +1,5 @@
-// SPDX-FileCopyrightText: 2024-2025 Knode.ai
+// SPDX-FileCopyrightText: 2025 Andy Curtis <contactandyc@gmail.com>
 // SPDX-License-Identifier: Apache-2.0
-// Maintainer: Andy Curtis <contactandyc@gmail.com>
 
 #include "a-curl-library/impl/curl_event_priv.h"
 #include "a-curl-library/curl_event_request.h"

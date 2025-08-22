@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 Andy Curtis
+// SPDX-FileCopyrightText: 2025 Andy Curtis <contactandyc@gmail.com>
 // SPDX-License-Identifier: Apache-2.0
 
 #include "a-curl-library/curl_event_loop.h"
