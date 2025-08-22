@@ -1,6 +1,7 @@
-// SPDX-FileCopyrightText: 2024-2025 Knode.ai
+// SPDX-FileCopyrightText: 2025 Andy Curtis <contactandyc@gmail.com>
+// SPDX-FileCopyrightText: 2024–2025 Knode.ai — technical questions: contact Andy (above)
 // SPDX-License-Identifier: Apache-2.0
-// Maintainer: Andy Curtis <contactandyc@gmail.com>
+
 #include "a-curl-library/worker_pool.h"
 #include "a-memory-library/aml_alloc.h"
 #include <pthread.h>

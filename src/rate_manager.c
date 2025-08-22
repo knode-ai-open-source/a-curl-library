@@ -1,6 +1,7 @@
-// SPDX-FileCopyrightText: 2024-2025 Knode.ai
+// SPDX-FileCopyrightText: 2025 Andy Curtis <contactandyc@gmail.com>
+// SPDX-FileCopyrightText: 2024–2025 Knode.ai — technical questions: contact Andy (above)
 // SPDX-License-Identifier: Apache-2.0
-// Maintainer: Andy Curtis <contactandyc@gmail.com>
+
 #include "a-curl-library/rate_manager.h"
 #include "the-macro-library/macro_time.h"
 #include "the-macro-library/macro_map.h"
@@ -50,7 +51,7 @@ typedef struct {
 
 static rate_manager_t *g_rate_manager = NULL;
 
-void rate_manager_init() {
+void rate_manager_init(void) {
     if(g_rate_manager)
         return;
 
@@ -210,7 +211,7 @@ int rate_manager_handle_429(const char *key) {
     return limit->backoff_seconds;
 }
 
-void rate_manager_destroy() {
+void rate_manager_destroy(void) {
     if (!g_rate_manager) return;
 
     pthread_mutex_lock(&g_rate_manager->mutex);

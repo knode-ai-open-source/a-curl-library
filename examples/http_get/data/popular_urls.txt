@@ -1,0 +1,46 @@
+# --- Basic HTML pages
+https://example.com/
+https://www.wikipedia.org/
+https://www.mozilla.org/
+
+# --- Small JSON APIs
+https://httpbin.org/get
+https://httpbin.org/uuid
+https://httpbin.org/ip
+https://api.ipify.org?format=json
+https://jsonplaceholder.typicode.com/todos/1
+
+# --- Compression / streaming
+https://httpbin.org/gzip
+https://httpbin.org/deflate
+https://httpbin.org/stream/5
+
+# --- Redirects
+https://httpbin.org/redirect/1
+https://httpbin.org/absolute-redirect/1
+
+# --- Status codes / empty bodies
+https://httpbin.org/status/200
+https://httpbin.org/status/204
+https://httpbin.org/status/404
+https://httpstat.us/418
+
+# --- Headers echo / custom content-type
+https://httpbin.org/headers
+https://httpbin.org/response-headers?Content-Type=application%2Fjson&X-Demo=1
+
+# --- Large plain text (watch your max_download_size)
+https://www.rfc-editor.org/rfc/rfc9110.txt
+
+# --- HTTP (no TLS) to test plaintext handling
+http://neverssl.com/
+
+# --- Diagnostics
+https://www.cloudflare.com/cdn-cgi/trace
+
+# --- Robots (quick text)
+https://www.google.com/robots.txt
+
+# --- Optional larger downloads (uncomment to test throughput)
+# https://speed.hetzner.de/1MB.bin
+# https://speed.hetzner.de/10MB.bin
